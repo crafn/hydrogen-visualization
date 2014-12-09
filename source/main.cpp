@@ -60,7 +60,7 @@ void main() \
 { \
     gl_FrontColor= gl_Color; \
     gl_TexCoord[0]= gl_MultiTexCoord0; \
-    gl_Position= gl_Vertex; \
+    gl_Position= vec4(gl_Vertex.x, gl_Vertex.y, 0.0, 1.0); \
 	v_pos= (gl_ModelViewProjectionMatrix*gl_Vertex).xyz; \
 } \
 \n";
@@ -70,8 +70,11 @@ const GLchar* g_fs= "\
 varying vec3 v_pos; \
 void main() \
 { \
-	float length= dot(v_pos, v_pos); \
-    gl_FragColor= vec4(sin(v_pos.x*10.0)*0.5 + 0.5, cos(v_pos.y*10.0 + v_pos.x*5.0)*0.5 + 0.5, v_pos.z, sin(v_pos.x*10.0) + 1.0 - length); \
+	float beam_a= 0.001/(v_pos.z*v_pos.z + v_pos.y*v_pos.y) + 0.005/(v_pos.x*v_pos.x + 0.05*(v_pos.z*v_pos.z + v_pos.y*v_pos.y)); \
+	vec3 beam_c= vec3(0.3 + abs(v_pos.x), 0.8, 1.0); \
+	float hole_a= pow(min(1.0, 0.1/(dot(v_pos, v_pos))), 3.0); \
+	float lerp= clamp(beam_a*(1.0 - hole_a), 0.0, 1.0); \
+    gl_FragColor= vec4(beam_c*lerp, beam_a + hole_a); \
 } \
 \n";
 
@@ -189,7 +192,7 @@ void init(Env& env, Shader& shd)
 	{ // Setup initial GL state
 		glClearColor(0.0, 0.0, 0.0, 1.0);
 		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 	}
 }
 
@@ -220,22 +223,30 @@ void draw(const Shader& shd)
 
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
+	glFrustum(	-1.0, // left
+				1.0, // right
+				-1.0, // bottom
+				1.0, // top
+				1.0, // near
+				1000.0); // far
 
 	static float rot;
-	rot += 5;
+	rot += 2;
 
 	glMatrixMode(GL_MODELVIEW);
 	glLoadIdentity();
-	glRotatef(rot, 1.0, 0.1, 1.0);
+	glTranslatef(0.0, 0.0, -2.0);
+	glRotatef(rot, 0.9, 0.1, 0.8);
 
-	float step= 0.1;
+	int slices= 50;
 
 	glBegin(GL_QUADS);
-	for (int i= 0; i < 100; ++i) {
-		glVertex3f(-.75, -.75, step*i);
-		glVertex3f( .75, -.75, step*i);
-		glVertex3f( .75,  .75, step*i);
-		glVertex3f(-.75,  .75, step*i);
+	for (int i= 0; i < slices; ++i) {
+		float z= -1.0 + i*2.0/slices; // -1.0 -> 1.0
+		glVertex3f(-1, -1, z);
+		glVertex3f(1, -1, z);
+		glVertex3f(1,  1, z);
+		glVertex3f(-1, 1, z);
 	}
 	glEnd();
 } 
