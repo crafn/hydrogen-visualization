@@ -81,11 +81,12 @@ vec2 sample(vec3 p) \
 { \
 	float beam_a= \
 		abs(cos(p.x*10.0 - sign(p.x)*u_phase)*0.5 + 1.0)* \
-			0.001/(p.z*p.z + p.y*p.y) + \
+			0.001/(p.z*p.z + p.y*p.y); \
+	float disc_a= \
 		0.01/((p.x*p.x + 0.01)*(p.z*p.z + p.y*p.y)*100.0 + 0.1); \
 	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0); \
 	float lerp= clamp((1.0 - hole_a), 0.0, 1.0); \
-    return vec2(beam_a*lerp, lerp); \
+    return vec2((disc_a + beam_a)*lerp, lerp); \
 } \
 void main() \
 { \
@@ -290,7 +291,7 @@ bool loop(const Env& env, const Shader& shd)
 	XWindowAttributes gwa;
 	XGetWindowAttributes(env.dpy, env.win, &gwa);
 	glViewport(0, 0, gwa.width, gwa.height);
-	
+
 	qm::draw(	shd,
 				2.0*win_x/gwa.width - 1.0,
 				1.0 - 2.0*win_y/gwa.height);
@@ -304,7 +305,7 @@ bool loop(const Env& env, const Shader& shd)
 		if(xev.type == KeyPress)
 			return false;
 	}
-	
+
 	return true;
 }
 
