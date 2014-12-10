@@ -38,10 +38,10 @@ varying vec3 v_normal; \
 vec2 sample(vec3 p) \
 { \
 	float beam_a= \
-		abs(cos(p.x*10.0 - sign(p.x)*u_phase)*0.5 + 1.0)* \
-			0.001/(p.z*p.z + p.y*p.y); \
+		abs(cos(p.z*10.0 - sign(p.z)*u_phase)*0.5 + 1.0)* \
+			0.001/(p.x*p.x + p.y*p.y); \
 	float disc_a= \
-		0.01/((p.x*p.x + 0.01)*(p.z*p.z + p.y*p.y)*100.0 + 0.1); \
+		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1); \
 	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0); \
 	float lerp= clamp((1.0 - hole_a), 0.0, 1.0); \
     return vec2((disc_a + beam_a)*lerp, lerp); \

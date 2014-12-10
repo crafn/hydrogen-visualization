@@ -3,7 +3,6 @@
 #include "env.hpp"
 
 #if OS == OS_LINUX
-#	include <GL/glx.h>
 #	include <unistd.h>
 #endif
 
