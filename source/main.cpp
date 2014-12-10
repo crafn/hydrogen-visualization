@@ -48,8 +48,8 @@ namespace qm {
 
 struct Env {
 	Display*	dpy;
-	Window      win;
-	GLXContext  ctx;
+	Window		win;
+	GLXContext	ctx;
 };
 
 struct Shader {
@@ -62,11 +62,12 @@ struct Shader {
 const GLchar* g_vs= "\
 #version 120\n\
 varying vec3 v_pos; \
+varying vec3 v_normal; \
 void main() \
 { \
-	float z_dist= gl_Vertex.z + 1.01; \
-    gl_Position= vec4(gl_Vertex.xy/z_dist, 0.0, 1.0); \
-	v_pos= (gl_ModelViewProjectionMatrix*gl_Vertex).xyz; \
+    gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0); \
+	v_pos= (gl_ModelViewMatrix*gl_Vertex).xyz; \
+	v_normal= mat3(gl_ModelViewMatrix)*vec3(gl_Vertex.xy, -1.0); \
 } \
 \n";
 
@@ -74,16 +75,31 @@ const GLchar* g_fs= "\
 #version 120\n\
 uniform float u_phase; \
 varying vec3 v_pos; \
-void main() \
+varying vec3 v_normal; \
+/* x emission, y translucency */ \
+vec2 sample(vec3 p) \
 { \
 	float beam_a= \
-		abs(cos(v_pos.x*10.0 - sign(v_pos.x)*u_phase)*0.5 + 1.0)* \
-			0.001/(v_pos.z*v_pos.z + v_pos.y*v_pos.y) + \
-		0.005/(v_pos.x*v_pos.x + 0.05*(v_pos.z*v_pos.z + v_pos.y*v_pos.y)); \
-	vec3 beam_c= vec3(0.3 + abs(v_pos.x), 0.8, 1.0); \
-	float hole_a= pow(min(1.0, 0.1/(dot(v_pos, v_pos))), 2.0); \
-	float lerp= clamp(beam_a*(1.0 - hole_a), 0.0, 1.0); \
-    gl_FragColor= vec4(beam_c*lerp, beam_a + hole_a); \
+		abs(cos(p.x*10.0 - sign(p.x)*u_phase)*0.5 + 1.0)* \
+			0.001/(p.z*p.z + p.y*p.y) + \
+		0.01/((p.x*p.x + 0.01)*(p.z*p.z + p.y*p.y)*100.0 + 0.1); \
+	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0); \
+	float lerp= clamp((1.0 - hole_a), 0.0, 1.0); \
+    return vec2(beam_a*lerp, lerp); \
+} \
+void main() \
+{ \
+	vec3 n= normalize(v_normal); \
+	vec3 color= vec3(0.3, 0.8, 1.0); \
+	vec3 accum= vec3(0, 0, 0); \
+	float transparency= 1.0; \
+	const int steps= 45; \
+	for (int i= 0; i < steps; ++i) { \
+		vec2 s= sample(v_pos + n*2.0*float(i)/steps); \
+		accum += color*s.x*transparency; \
+		transparency *= s.y; \
+	} \
+	gl_FragColor= vec4(accum, 1.0); \
 } \
 \n";
 
@@ -205,7 +221,7 @@ void init(Env& env, Shader& shd)
 	{ // Setup initial GL state
 		glClearColor(0.0, 0.0, 0.0, 0.0);
 		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	}
 }
 
@@ -250,32 +266,26 @@ void draw(const Shader& shd, float x, float y)
 	glLoadIdentity();
 	glRotatef(std::sqrt(x*x + y*y)*200.0, y, -x, 0.0);
 
-	int slices= 55;
-
 	glUseProgram(shd.prog);
 	glUniform1f(shd.phaseLoc, phase);
 
 	glBegin(GL_QUADS);
-	for (int i= 0; i < slices; ++i) {
-		// z in [-1.0, 1.0]
-		float z= 1.0 - 2.0*i/slices;
-		glVertex3f(-1, -1, z);
-		glVertex3f(1, -1, z);
-		glVertex3f(1,  1, z);
-		glVertex3f(-1, 1, z);
-	}
+		glVertex3f(-1, -1, 1);
+		glVertex3f(1, -1, 1);
+		glVertex3f(1,  1, 1);
+		glVertex3f(-1, 1, 1);
 	glEnd();
 } 
 
 bool loop(const Env& env, const Shader& shd)
 {
 	int root_x= 0, root_y= 0;
-    Window w;
-    int win_x, win_y;
-    unsigned int mask_return;
-	XQueryPointer(env.dpy, env.win, &w,
-			&w, &root_x, &root_y, &win_x, &win_y,
-			&mask_return);
+	Window w;
+	int win_x, win_y;
+	unsigned int mask_return;
+	XQueryPointer(	env.dpy, env.win, &w,
+					&w, &root_x, &root_y, &win_x, &win_y,
+					&mask_return);
 
 	XWindowAttributes gwa;
 	XGetWindowAttributes(env.dpy, env.win, &gwa);
