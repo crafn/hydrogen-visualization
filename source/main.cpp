@@ -1,56 +1,14 @@
+// See unity.cpp for build instructions
+
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cmath>
-#include <GL/gl.h>
 
-#include <X11/X.h>
-#include <X11/Xlib.h>
-#include <GL/glx.h>
-#include <unistd.h>
-
-
-// Required GL 2.1 funcs
-typedef GLuint (*GlCreateShader)(GLenum);
-GlCreateShader glCreateShader;
-typedef void (*GlShaderSource)(GLuint, GLsizei, const GLchar**, const GLint*);
-GlShaderSource glShaderSource;
-typedef void (*GlCompileShader)(GLuint);
-GlCompileShader glCompileShader;
-typedef GLuint (*GlCreateProgram)();
-GlCreateProgram glCreateProgram;
-typedef void (*GlAttachShader)(GLuint, GLuint);
-GlAttachShader glAttachShader;
-typedef void (*GlLinkProgram)(GLuint);
-GlLinkProgram glLinkProgram;
-typedef void (*GlUseProgram)(GLuint);
-GlUseProgram glUseProgram;
-typedef void (*GlGetShaderiv)(GLuint, GLenum, GLint*);
-GlGetShaderiv glGetShaderiv;
-typedef void (*GlGetProgramiv)(GLuint, GLenum, GLint*);
-GlGetProgramiv glGetProgramiv;
-typedef void (*GlGetShaderInfoLog)(GLuint, GLsizei, GLsizei*, GLchar*);
-GlGetShaderInfoLog glGetShaderInfoLog;
-typedef void (*GlGetProgramInfoLog)(GLuint, GLsizei, GLsizei*, GLchar*);
-GlGetProgramInfoLog glGetProgramInfoLog;
-typedef void (*GlDetachShader)(GLuint, GLuint);
-GlDetachShader glDetachShader;
-typedef void (*GlDeleteShader)(GLuint);
-GlDeleteShader glDeleteShader;
-typedef void (*GlDeleteProgram)(GLuint);
-GlDeleteProgram glDeleteProgram;
-typedef GLuint (*GlGetUniformLocation)(GLuint, const GLchar*);
-GlGetUniformLocation glGetUniformLocation;
-typedef void (*GlUniform1f)(GLuint, GLfloat);
-GlUniform1f glUniform1f;
+#include "env.hpp"
+#include "gl.hpp"
 
 namespace qm {
-
-struct Env {
-	Display*	dpy;
-	Window		win;
-	GLXContext	ctx;
-};
 
 struct Shader {
 	GLuint vs;
@@ -104,17 +62,6 @@ void main() \
 } \
 \n";
 
-typedef void (*voidFunc)();
-voidFunc queryGlFunc(const char* name)
-{
-	voidFunc f=	glXGetProcAddressARB((const GLubyte*)name);
-	if (!f) {
-		std::printf("Failed to query function: %s", name);
-		std::abort();
-	}
-	return f;
-}
-
 void checkShaderStatus(GLuint shd)
 {
 	GLint status;
@@ -143,57 +90,8 @@ void checkProgramStatus(GLuint prog)
 
 void init(Env& env, Shader& shd)
 {
-	{ // Create window
-		env.dpy= XOpenDisplay(NULL);
-		if(env.dpy == NULL)
-			std::abort();
-
-		Window root= DefaultRootWindow(env.dpy);
-		GLint att[]= { GLX_RGBA, GLX_DEPTH_SIZE, 24, GLX_DOUBLEBUFFER, None };
-		XVisualInfo* vi= glXChooseVisual(env.dpy, 0, att);
-
-		if(vi == NULL)
-			std::abort();
-
-		Colormap cmap;
-		cmap= XCreateColormap(env.dpy, root, vi->visual, AllocNone);
-		XSetWindowAttributes swa;
-		swa.colormap= cmap;
-		swa.event_mask= ExposureMask | KeyPressMask;
-		env.win=
-			XCreateWindow(	env.dpy,
-							root,
-							0, 0, 600, 600, 0,
-							vi->depth,
-							InputOutput,
-							vi->visual,
-							CWColormap | CWEventMask,
-							&swa);
-		XMapWindow(env.dpy, env.win);
-		XStoreName(env.dpy, env.win, "QM Test");
-
-		env.ctx= glXCreateContext(env.dpy, vi, NULL, GL_TRUE);
-		glXMakeCurrent(env.dpy, env.win, env.ctx);
-	}
-
-	{ // Query necessary GL functions
-		glCreateShader= (GlCreateShader)queryGlFunc("glCreateShader");
-		glShaderSource= (GlShaderSource)queryGlFunc("glShaderSource");
-		glCompileShader= (GlCompileShader)queryGlFunc("glCompileShader");
-		glCreateProgram= (GlCreateProgram)queryGlFunc("glCreateProgram");
-		glAttachShader= (GlAttachShader)queryGlFunc("glAttachShader");
-		glLinkProgram= (GlLinkProgram)queryGlFunc("glLinkProgram");
-		glUseProgram= (GlUseProgram)queryGlFunc("glUseProgram");
-		glGetShaderiv= (GlGetShaderiv)queryGlFunc("glGetShaderiv");
-		glGetProgramiv= (GlGetProgramiv)queryGlFunc("glGetProgramiv");
-		glGetShaderInfoLog= (GlGetShaderInfoLog)queryGlFunc("glGetShaderInfoLog");
-		glGetProgramInfoLog= (GlGetProgramInfoLog)queryGlFunc("glGetProgramInfoLog");
-		glDetachShader= (GlDetachShader)queryGlFunc("glDetachShader");
-		glDeleteShader= (GlDeleteShader)queryGlFunc("glDeleteShader");
-		glDeleteProgram= (GlDeleteProgram)queryGlFunc("glDeleteProgram");
-		glGetUniformLocation= (GlGetUniformLocation)queryGlFunc("glGetUniformLocation");
-		glUniform1f= (GlUniform1f)queryGlFunc("glUniform1f");
-	}
+	env= envInit();
+	queryGlFuncs();
 
 	{ // Create shaders
 		{ // Vertex
@@ -226,24 +124,17 @@ void init(Env& env, Shader& shd)
 	}
 }
 
-void quit(const Env& env, const Shader& shd)
+void quit(Env& env, const Shader& shd)
 {
-	{ // Close window
-		glXMakeCurrent(env.dpy, None, NULL);
-		glXDestroyContext(env.dpy, env.ctx);
-		XDestroyWindow(env.dpy, env.win);
-		XCloseDisplay(env.dpy);
-	}
+	glDetachShader(shd.prog, shd.vs);
+	glDeleteShader(shd.vs);
 
-	{ // Destroy shaders
-		glDetachShader(shd.prog, shd.vs);
-		glDeleteShader(shd.vs);
+	glDetachShader(shd.prog, shd.fs);
+	glDeleteShader(shd.fs);
 
-		glDetachShader(shd.prog, shd.fs);
-		glDeleteShader(shd.fs);
-
-		glDeleteProgram(shd.prog);
-	}
+	glDeleteProgram(shd.prog);
+	
+	envQuit(env);
 }
 
 void draw(const Shader& shd, float x, float y)
@@ -278,46 +169,22 @@ void draw(const Shader& shd, float x, float y)
 	glEnd();
 } 
 
-bool loop(const Env& env, const Shader& shd)
-{
-	int root_x= 0, root_y= 0;
-	Window w;
-	int win_x, win_y;
-	unsigned int mask_return;
-	XQueryPointer(	env.dpy, env.win, &w,
-					&w, &root_x, &root_y, &win_x, &win_y,
-					&mask_return);
-
-	XWindowAttributes gwa;
-	XGetWindowAttributes(env.dpy, env.win, &gwa);
-	glViewport(0, 0, gwa.width, gwa.height);
-
-	qm::draw(	shd,
-				2.0*win_x/gwa.width - 1.0,
-				1.0 - 2.0*win_y/gwa.height);
-
-	usleep(1);
-	glXSwapBuffers(env.dpy, env.win);
-
-	while(XPending(env.dpy)) {
-		XEvent xev;
-        XNextEvent(env.dpy, &xev);
-		if(xev.type == KeyPress)
-			return false;
-	}
-
-	return true;
-}
-
 } // qm
 
 int main()
 {
 	qm::Env env;
 	qm::Shader shd;
-
 	qm::init(env, shd);
-	while(loop(env, shd));
+
+	while (!env.quitRequested) {
+		envUpdate(env);
+		glViewport(0, 0, env.winWidth, env.winHeight);
+		qm::draw(	shd,
+					env.cursorX,
+					env.cursorY);
+	}
+
 	qm::quit(env, shd);
 }
 
