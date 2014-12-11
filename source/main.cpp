@@ -6,7 +6,6 @@
 
 #include "env.hpp"
 #include "gl.hpp"
-#include "gui.hpp"
 
 namespace qm {
 struct Shader {
@@ -46,7 +45,7 @@ vec2 sample(vec3 p) \
 		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1); \
 	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0); \
 	float a= clamp(hole_a, 0.0, 1.0); \
-    return vec2((disc_e + beam_e)*(1 - a), a + disc_e*7.0)*20.0; \
+    return vec2((disc_e + beam_e)*(1 - a), a + disc_e*7.0)*25.0; \
 } \
 void main() \
 { \
@@ -113,22 +112,75 @@ void quit(Env& env, const Shader& shd)
 	envQuit(env);
 }
 
-void frame(const Env& env, const Shader& shd, const Vec2f cursor)
+void frame(const Env& env, const Shader& shd)
 {
 	static float setting_r= 0.3;
 	static float setting_g= 0.8;
 	static float setting_b= 1.0;
 
+	struct Slider {
+		const char* title;
+		float min;
+		float max;
+		float& value;
+		int decimals;
+		bool hover;
 
+		static float height() { return 0.05; }
+		static float width() { return 0.4; }
+		static float top(std::size_t i) { return 1.0 - i*height(); }
+		static float bottom(std::size_t i) { return top(i + 1); }
+		bool pointInside(std::size_t i, Vec2f p) const
+		{
+			return	p.x  >= -1.0	&& p.x < width() - 1.0 &&
+					p.y > bottom(i)	&& p.y < top(i);
+		}
+		float fraction() const
+		{ return (value - min)/(max - min); }
+		float coordToValue(float x) const
+		{
+			return clamp((1.0 + x)/width()*(max - min) + min, min, max);
+		}
+	};
+
+	static Slider sliders[]= {
+		{ "r",		0.0,	2.0, setting_r,	2,	false },
+		{ "g",		0.0,	2.0, setting_g,	2,	false },
+		{ "b",		0.0,	2.0, setting_b,	2,	false },
+	};
+	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
+	
+	static Vec2f prev_delta;
+	static Vec2f rot;
+	
+	{ // User interaction
+		bool slider_activity= false;
+		for (std::size_t i= 0; i < slider_count; ++i) {
+			Slider& s= sliders[i];
+			if (s.pointInside(i, env.anchorPos)) {
+				if (env.lmbDown)
+					s.value= s.coordToValue(env.cursorPos.x);
+				s.hover= true;
+				slider_activity= true;
+			} else {
+				s.hover= false;
+			}
+		}
+		
+		if (env.lmbDown && !slider_activity) {
+			Vec2f smooth_delta= prev_delta*0.5 + (env.cursorDelta)*0.5;
+			prev_delta= smooth_delta;
+			
+			rot += smooth_delta*2;
+			rot.y= clamp(rot.y, -tau/4, tau/4);
+		}
+	}
+	
 	glClear(GL_COLOR_BUFFER_BIT);
+	glViewport(0, 0, env.winSize.x, env.winSize.y);
 
-	{ // Volume
+	{ // Draw volume
 		static float phase;
-		static Vec2f prev_smooth;
-
-		// Smooth rotating
-		Vec2f smooth= prev_smooth*0.5 + cursor*0.5;
-		prev_smooth= smooth;
 
 		/// @todo *dt
 		phase += 0.3;
@@ -137,8 +189,9 @@ void frame(const Env& env, const Shader& shd, const Vec2f cursor)
 		glLoadIdentity();
 
 		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
-		glRotatef(smooth.length()*200.0, smooth.y, -smooth.x, 0.0);
+		// Trackball-style rotation
+		glRotatef(rot.y*radToDeg, cos(rot.x), 0.0, sin(rot.x));
+		glRotatef(rot.x*radToDeg, 0.0, -1.0, 0.0);
 
 		glUseProgram(shd.prog);
 		glUniform1f(shd.phaseLoc, phase);
@@ -152,50 +205,14 @@ void frame(const Env& env, const Shader& shd, const Vec2f cursor)
 		glEnd();
 	}
 
-	{ // Gui
-		struct Slider {
-			const char* title;
-			float min;
-			float max;
-			float& value;
-			int decimals;
-			bool hover;
-
-			static float height() { return 0.05; }
-			static float width() { return 0.4; }
-			static float top(std::size_t i) { return 1.0 - i*height(); }
-			static float bottom(std::size_t i) { return top(i + 1); }
-			float fraction() const
-			{ return (value - min)/(max - min); }
-		};
-
-		static Slider sliders[]= {
-			{ "r",         0.0,  1.0, setting_r,  2, false },
-			{ "g",         0.0,  1.0, setting_g,  2, false },
-			{ "b",         0.0,  1.0, setting_b,  2, false },
-		};
-		const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
-
-		// User interaction
-		for (std::size_t i= 0; i < slider_count; ++i) {
-			Slider& s= sliders[i];
-			if (	cursor.x + 1.0 >= 0.0 && cursor.x + 1.0 < s.width() &&
-					cursor.y >= s.bottom(i) && cursor.y < s.top(i)) {
-				if (env.lmbDown)
-					s.value= (1.0 + cursor.x)/s.width()*(s.max - s.min);
-				s.hover= true;
-			} else {
-				s.hover= false;
-			}
-		}
-
+	{ // Draw gui
 		glMatrixMode(GL_MODELVIEW);
 		glLoadIdentity();
 		glUseProgram(0);
 
 		glBegin(GL_QUADS);
 			// Background
-			glColor4f(0.0, 0.0, 0.0, 0.2);
+			glColor4f(0.0, 0.0, 0.0, 0.3);
 			glVertex2f(-1.0, 1.0);
 			glVertex2f(-1.0, 1.0 - slider_count*Slider::height());
 			glVertex2f(Slider::width() - 1.0, 1.0 - slider_count*Slider::height());
@@ -208,9 +225,9 @@ void frame(const Env& env, const Shader& shd, const Vec2f cursor)
 				float width= s.width()*s.fraction();
 
 				if (!s.hover)
-					glColor4f(0.2, 0.2, 0.2, 0.5);
+					glColor4f(0.3, 0.3, 0.3, 0.6);
 				else
-					glColor4f(1.0, 1.0, 1.0, 0.5);
+					glColor4f(1.0, 1.0, 1.0, 0.8);
 
 				glVertex2f(-1.0, top);
 				glVertex2f(-1.0, bottom);
@@ -231,10 +248,7 @@ int main()
 
 	while (!env.quitRequested) {
 		qm::envUpdate(env);
-		glViewport(0, 0, env.winSize.x, env.winSize.y);
-		qm::frame(	env,
-					shd,
-					env.cursorPos);
+		qm::frame(env, shd);
 	}
 
 	qm::quit(env, shd);

@@ -25,8 +25,10 @@ namespace qm {
 
 struct Env {
 	Vec2f cursorPos; // Cursor position in OpenGL coordinates
+	Vec2f anchorPos; // Mouse dragging start position
+	Vec2f cursorDelta;
 	bool lmbDown;
-	Vec2i winSize; // Window size in pixels
+	Vec2i winSize; // Window content size in pixels
 	bool quitRequested;
 
 #if OS == OS_LINUX

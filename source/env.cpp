@@ -130,6 +130,8 @@ void envQuit(Env& env)
 
 void envUpdate(Env& env)
 {
+	Vec2f prev_cursor_pos= env.cursorPos;
+
 #if OS == OS_LINUX
 	usleep(1);
 	glXSwapBuffers(env.dpy, env.win);
@@ -180,14 +182,15 @@ void envUpdate(Env& env)
 		TranslateMessage(&msg); 
 		DispatchMessage(&msg); 
 	}
+	env.lmbDown= GetKeyState(VK_LBUTTON) & 0x8000;
 
 	if (Env::closeEvent)
 		env.quitRequested= true;
 
 	RECT rect;
-	if(GetWindowRect(env.hWnd, &rect)) {
+	if(GetClientRect(env.hWnd, &rect)) {
 		env.winSize.x= rect.right - rect.left;
-		env.winHeight= rect.bottom - rect.top;
+		env.winSize.y= rect.bottom - rect.top;
 	}
 	POINT cursor;
 	GetCursorPos(&cursor);
@@ -196,6 +199,10 @@ void envUpdate(Env& env)
 	env.cursorPos.y= 1.0 - 2.0*cursor.y/(rect.bottom - rect.top);
 
 #endif
+
+	env.cursorDelta= env.cursorPos - prev_cursor_pos;
+	if (!env.lmbDown)
+		env.anchorPos= env.cursorPos;
 }
 
 typedef void (*voidFunc)();
