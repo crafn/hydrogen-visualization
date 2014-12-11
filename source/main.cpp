@@ -34,31 +34,30 @@ const GLchar* g_fs= "\
 uniform float u_phase; \
 varying vec3 v_pos; \
 varying vec3 v_normal; \
-/* x emission, y translucency */ \
+/* x emission, y absorption */ \
 vec2 sample(vec3 p) \
 { \
-	float beam_a= \
+	float beam_e= \
 		abs(cos(p.z*10.0 - sign(p.z)*u_phase)*0.5 + 1.0)* \
-			0.001/(p.x*p.x + p.y*p.y); \
-	float disc_a= \
+			0.001/(p.x*p.x + p.y*p.y + 0.001); \
+	float disc_e= \
 		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1); \
 	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0); \
-	float lerp= clamp((1.0 - hole_a), 0.0, 1.0); \
-    return vec2((disc_a + beam_a)*lerp, lerp); \
+	float a= clamp(hole_a, 0.0, 1.0); \
+    return vec2((disc_e + beam_e)*(1 - a), a + disc_e*7.0)*20.0; \
 } \
 void main() \
 { \
 	vec3 n= normalize(v_normal); \
 	vec3 color= vec3(0.3, 0.8, 1.0); \
-	vec3 accum= vec3(0, 0, 0); \
-	float transparency= 1.0; \
+	float intensity= 0.0; \
 	const int steps= 45; \
+	const float dl= 2.0/steps; \
 	for (int i= 0; i < steps; ++i) { \
-		vec2 s= sample(v_pos + n*2.0*float(i)/steps); \
-		accum += color*s.x*transparency; \
-		transparency *= s.y; \
+		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps); \
+		intensity= max(0, intensity + (s.x - s.y*intensity)*dl); \
 	} \
-	gl_FragColor= vec4(accum, 1.0); \
+	gl_FragColor= vec4(color*intensity, 1.0); \
 } \
 \n";
 
