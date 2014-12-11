@@ -34,6 +34,9 @@ uniform float u_phase; \
 uniform vec3 u_color; \
 varying vec3 v_pos; \
 varying vec3 v_normal; \
+float rand(vec2 co){ \
+    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); \
+} \
 /* x emission, y absorption */ \
 vec2 sample(vec3 p) \
 { \
@@ -58,6 +61,7 @@ void main() \
 		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps); \
 		intensity= max(0, intensity + (s.x - s.y*intensity)*dl); \
 	} \
+	intensity += rand(v_pos.xy + vec2(u_phase, 0))*0.02; \
 	gl_FragColor= vec4(color*intensity, 1.0); \
 } \
 \n";
