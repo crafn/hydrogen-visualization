@@ -1,20 +1,20 @@
 // See unity.cpp for build instructions
 
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "env.hpp"
 #include "gl.hpp"
+#include "gui.hpp"
 
 namespace qm {
-
 struct Shader {
 	GLuint vs;
 	GLuint fs;
 	GLuint prog;
 	GLuint phaseLoc;
+	GLuint colorLoc;
 };
 
 const GLchar* g_vs= "\
@@ -32,11 +32,13 @@ void main() \
 const GLchar* g_fs= "\
 #version 120\n\
 uniform float u_phase; \
+uniform vec3 u_color; \
 varying vec3 v_pos; \
 varying vec3 v_normal; \
 /* x emission, y absorption */ \
 vec2 sample(vec3 p) \
 { \
+	p.z += 0.2; \
 	float beam_e= \
 		abs(cos(p.z*10.0 - sign(p.z)*u_phase)*0.5 + 1.0)* \
 			0.001/(p.x*p.x + p.y*p.y + 0.001); \
@@ -49,7 +51,7 @@ vec2 sample(vec3 p) \
 void main() \
 { \
 	vec3 n= normalize(v_normal); \
-	vec3 color= vec3(0.3, 0.8, 1.0); \
+	vec3 color= u_color; \
 	float intensity= 0.0; \
 	const int steps= 45; \
 	const float dl= 2.0/steps; \
@@ -60,32 +62,6 @@ void main() \
 	gl_FragColor= vec4(color*intensity, 1.0); \
 } \
 \n";
-
-void checkShaderStatus(GLuint shd)
-{
-	GLint status;
-	glGetShaderiv(shd, GL_COMPILE_STATUS, &status);
-	if (!status) {
-		const GLsizei max_len= 512;
-		GLchar log[max_len];
-		glGetShaderInfoLog(shd, max_len, NULL, log);
-		std::printf("Shader compilation failed: %s", log);
-		std::abort();
-	}
-}
-
-void checkProgramStatus(GLuint prog)
-{
-	GLint link_status;
-	glGetProgramiv(prog, GL_LINK_STATUS, &link_status);
-	if (!link_status) {
-		const GLsizei size= 512;
-		GLchar log[size];
-		glGetProgramInfoLog(prog, size, NULL, log);
-		std::printf("Program link failed: %s", log);
-		std::abort();
-	}
-}
 
 void init(Env& env, Shader& shd)
 {
@@ -113,6 +89,7 @@ void init(Env& env, Shader& shd)
 			checkProgramStatus(shd.prog);
 
 			shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
+			shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
 		}
 	}
 
@@ -132,40 +109,116 @@ void quit(Env& env, const Shader& shd)
 	glDeleteShader(shd.fs);
 
 	glDeleteProgram(shd.prog);
-	
+
 	envQuit(env);
 }
 
-void draw(const Shader& shd, float x, float y)
+void frame(const Env& env, const Shader& shd, const Vec2f cursor)
 {
-	static float phase;
-	static float prev_x, prev_y;
-	phase += 0.3;
+	static float setting_r= 0.3;
+	static float setting_g= 0.8;
+	static float setting_b= 1.0;
 
-	// Smooth rotating
-	x= prev_x*0.5 + x*0.5;
-	y= prev_y*0.5 + y*0.5;
-	prev_x= x;
-	prev_y= y;
 
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
+	{ // Volume
+		static float phase;
+		static Vec2f prev_smooth;
 
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
-	glRotatef(std::sqrt(x*x + y*y)*200.0, y, -x, 0.0);
+		// Smooth rotating
+		Vec2f smooth= prev_smooth*0.5 + cursor*0.5;
+		prev_smooth= smooth;
 
-	glUseProgram(shd.prog);
-	glUniform1f(shd.phaseLoc, phase);
+		/// @todo *dt
+		phase += 0.3;
 
-	glBegin(GL_QUADS);
-		glVertex3f(-1, -1, 1);
-		glVertex3f(1, -1, 1);
-		glVertex3f(1,  1, 1);
-		glVertex3f(-1, 1, 1);
-	glEnd();
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+		glRotatef(smooth.length()*200.0, smooth.y, -smooth.x, 0.0);
+
+		glUseProgram(shd.prog);
+		glUniform1f(shd.phaseLoc, phase);
+		glUniform3f(shd.colorLoc, setting_r, setting_g, setting_b);
+
+		glBegin(GL_QUADS);
+			glVertex3f(-1, -1, 1);
+			glVertex3f(1, -1, 1);
+			glVertex3f(1,  1, 1);
+			glVertex3f(-1, 1, 1);
+		glEnd();
+	}
+
+	{ // Gui
+		struct Slider {
+			const char* title;
+			float min;
+			float max;
+			float& value;
+			int decimals;
+			bool hover;
+
+			static float height() { return 0.05; }
+			static float width() { return 0.4; }
+			static float top(std::size_t i) { return 1.0 - i*height(); }
+			static float bottom(std::size_t i) { return top(i + 1); }
+			float fraction() const
+			{ return (value - min)/(max - min); }
+		};
+
+		static Slider sliders[]= {
+			{ "r",         0.0,  1.0, setting_r,  2, false },
+			{ "g",         0.0,  1.0, setting_g,  2, false },
+			{ "b",         0.0,  1.0, setting_b,  2, false },
+		};
+		const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
+
+		// User interaction
+		for (std::size_t i= 0; i < slider_count; ++i) {
+			Slider& s= sliders[i];
+			if (	cursor.x + 1.0 >= 0.0 && cursor.x + 1.0 < s.width() &&
+					cursor.y >= s.bottom(i) && cursor.y < s.top(i)) {
+				if (env.lmbDown)
+					s.value= (1.0 + cursor.x)/s.width()*(s.max - s.min);
+				s.hover= true;
+			} else {
+				s.hover= false;
+			}
+		}
+
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+		glUseProgram(0);
+
+		glBegin(GL_QUADS);
+			// Background
+			glColor4f(0.0, 0.0, 0.0, 0.2);
+			glVertex2f(-1.0, 1.0);
+			glVertex2f(-1.0, 1.0 - slider_count*Slider::height());
+			glVertex2f(Slider::width() - 1.0, 1.0 - slider_count*Slider::height());
+			glVertex2f(Slider::width() - 1.0, 1.0);
+
+			for (std::size_t i= 0; i < slider_count; ++i) {
+				Slider& s= sliders[i];
+				float top= s.top(i);
+				float bottom= s.bottom(i);
+				float width= s.width()*s.fraction();
+
+				if (!s.hover)
+					glColor4f(0.2, 0.2, 0.2, 0.5);
+				else
+					glColor4f(1.0, 1.0, 1.0, 0.5);
+
+				glVertex2f(-1.0, top);
+				glVertex2f(-1.0, bottom);
+				glVertex2f(-1.0 + width, bottom);
+				glVertex2f(-1.0 + width, top);
+			}
+		glEnd();
+	}
 } 
 
 } // qm
@@ -177,11 +230,11 @@ int main()
 	qm::init(env, shd);
 
 	while (!env.quitRequested) {
-		envUpdate(env);
-		glViewport(0, 0, env.winWidth, env.winHeight);
-		qm::draw(	shd,
-					env.cursorX,
-					env.cursorY);
+		qm::envUpdate(env);
+		glViewport(0, 0, env.winSize.x, env.winSize.y);
+		qm::frame(	env,
+					shd,
+					env.cursorPos);
 	}
 
 	qm::quit(env, shd);

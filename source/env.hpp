@@ -19,17 +19,14 @@
 #	include <Windows.h>
 #endif
 
+#include "util.hpp"
+
 namespace qm {
 
 struct Env {
-	// Cursor position in OpenGL coordinates
-	float cursorX;
-	float cursorY;
-	
-	// Window size in pixels
-	int winWidth;
-	int winHeight;
-	
+	Vec2f cursorPos; // Cursor position in OpenGL coordinates
+	bool lmbDown;
+	Vec2i winSize; // Window size in pixels
 	bool quitRequested;
 
 #if OS == OS_LINUX

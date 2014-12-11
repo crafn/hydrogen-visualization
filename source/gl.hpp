@@ -46,6 +46,8 @@ typedef GLuint (*GlGetUniformLocation)(GLuint, const GLchar*);
 GlGetUniformLocation glGetUniformLocation;
 typedef void (*GlUniform1f)(GLuint, GLfloat);
 GlUniform1f glUniform1f;
+typedef void (*GlUniform3f)(GLuint, GLfloat, GLfloat, GLfloat);
+GlUniform3f glUniform3f;
 
 namespace qm {
 
@@ -68,7 +70,35 @@ void queryGlFuncs()
 	glDeleteProgram= (GlDeleteProgram)queryGlFunc("glDeleteProgram");
 	glGetUniformLocation= (GlGetUniformLocation)queryGlFunc("glGetUniformLocation");
 	glUniform1f= (GlUniform1f)queryGlFunc("glUniform1f");
+	glUniform3f= (GlUniform3f)queryGlFunc("glUniform3f");
+}
 
+inline
+void checkShaderStatus(GLuint shd)
+{
+	GLint status;
+	glGetShaderiv(shd, GL_COMPILE_STATUS, &status);
+	if (!status) {
+		const GLsizei max_len= 512;
+		GLchar log[max_len];
+		glGetShaderInfoLog(shd, max_len, NULL, log);
+		std::printf("Shader compilation failed: %s", log);
+		std::abort();
+	}
+}
+
+inline
+void checkProgramStatus(GLuint prog)
+{
+	GLint link_status;
+	glGetProgramiv(prog, GL_LINK_STATUS, &link_status);
+	if (!link_status) {
+		const GLsizei size= 512;
+		GLchar log[size];
+		glGetProgramInfoLog(prog, size, NULL, log);
+		std::printf("Program link failed: %s", log);
+		std::abort();
+	}
 }
 
 } // qm

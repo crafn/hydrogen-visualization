@@ -14,16 +14,14 @@ bool Env::closeEvent;
 
 Env envInit()
 {
-	Env env;
-	env.cursorX= 0.0;
-	env.cursorY= 0.0;
-	env.winWidth= 1;
-	env.winHeight= 1;
-	env.quitRequested= false;
-
 	const char* title= "QM Test";
-	int resox= 600;
-	int resoy= 600;
+	Vec2i reso(800, 800);
+
+	Env env;
+	env.cursorPos= Vec2f(0);
+	env.lmbDown= false;
+	env.winSize= reso;
+	env.quitRequested= false;
 
 #if OS == OS_LINUX
 	env.dpy= XOpenDisplay(NULL);
@@ -41,11 +39,11 @@ Env envInit()
 	cmap= XCreateColormap(env.dpy, root, vi->visual, AllocNone);
 	XSetWindowAttributes swa;
 	swa.colormap= cmap;
-	swa.event_mask= ExposureMask | KeyPressMask;
+	swa.event_mask= ExposureMask | KeyPressMask | ButtonPressMask | ButtonReleaseMask;
 	env.win=
 		XCreateWindow(	env.dpy,
 						root,
-						0, 0, resox, resoy, 0,
+						0, 0, reso.x, reso.y, 0,
 						vi->depth,
 						InputOutput,
 						vi->visual,
@@ -53,14 +51,9 @@ Env envInit()
 						&swa);
 	XMapWindow(env.dpy, env.win);
 	XStoreName(env.dpy, env.win, title);
-
+	
 	env.ctx= glXCreateContext(env.dpy, vi, NULL, GL_TRUE);
 	glXMakeCurrent(env.dpy, env.win, env.ctx);
-
-	XWindowAttributes gwa;
-	XGetWindowAttributes(env.dpy, env.win, &gwa);
-	env.winWidth= gwa.width;
-	env.winHeight= gwa.height;
 
 #elif OS == OS_WINDOWS
 	struct WndProc {
@@ -99,7 +92,7 @@ Env envInit()
 		wc.lpszClassName,
 		title,
 		WS_OVERLAPPEDWINDOW|WS_VISIBLE,
-		0, 0, resox, resoy, 0, 0, wc.hInstance, 0);
+		0, 0, reso.x, reso.y, 0, 0, wc.hInstance, 0);
 
 	// Create OpenGL context
 	PIXELFORMATDESCRIPTOR pfd= {
@@ -144,14 +137,27 @@ void envUpdate(Env& env)
 	while(XPending(env.dpy)) {
 		XEvent xev;
         XNextEvent(env.dpy, &xev);
-		if(xev.type == KeyPress)
-			env.quitRequested= true;
+		if(xev.type == KeyPress) {
+			int keys_ret;
+			KeySym* keysym=
+				XGetKeyboardMapping(env.dpy, xev.xkey.keycode, 1, &keys_ret);
+			
+			if (*keysym == XK_Escape)
+				env.quitRequested= true;
+
+			XFree(keysym);
+		}
+
+		if (xev.xbutton.type == ButtonPress)
+			env.lmbDown= true;
+		else if (xev.xbutton.type == ButtonRelease)
+			env.lmbDown= false;
 	}
 
 	XWindowAttributes gwa;
 	XGetWindowAttributes(env.dpy, env.win, &gwa);
-	env.winWidth= gwa.width;
-	env.winHeight= gwa.height;
+	env.winSize.x= gwa.width;
+	env.winSize.y= gwa.height;
 
 	int root_x= 0, root_y= 0;
 	Window w;
@@ -161,13 +167,13 @@ void envUpdate(Env& env)
 					&w, &root_x, &root_y, &cursor_x, &cursor_y,
 					&mask);
 
-	env.cursorX= 2.0*cursor_x/gwa.width - 1.0;
-	env.cursorY= 1.0 - 2.0*cursor_y/gwa.height;
+	env.cursorPos.x= 2.0*cursor_x/gwa.width - 1.0;
+	env.cursorPos.y= 1.0 - 2.0*cursor_y/gwa.height;
 
 #elif OS == OS_WINDOWS
 	Sleep(1);
 	SwapBuffers(env.hDC);
-	
+
 	MSG msg;
 	BOOL bRet;
 	while(PeekMessage(&msg, env.hWnd, 0, 0, PM_REMOVE) > 0) { 
@@ -180,14 +186,14 @@ void envUpdate(Env& env)
 
 	RECT rect;
 	if(GetWindowRect(env.hWnd, &rect)) {
-		env.winWidth= rect.right - rect.left;
+		env.winSize.x= rect.right - rect.left;
 		env.winHeight= rect.bottom - rect.top;
 	}
 	POINT cursor;
 	GetCursorPos(&cursor);
 	ScreenToClient(env.hWnd, &cursor);
-	env.cursorX= 2.0*cursor.x/(rect.right - rect.left) - 1.0;
-	env.cursorY= 1.0 - 2.0*cursor.y/(rect.bottom - rect.top);
+	env.cursorPos.x= 2.0*cursor.x/(rect.right - rect.left) - 1.0;
+	env.cursorPos.y= 1.0 - 2.0*cursor.y/(rect.bottom - rect.top);
 
 #endif
 }
