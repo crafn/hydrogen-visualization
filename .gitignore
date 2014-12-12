@@ -33,3 +33,4 @@ qm
 *~
 *.swp
 *.swo
+tools/font.h

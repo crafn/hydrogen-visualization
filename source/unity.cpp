@@ -10,4 +10,5 @@
 // MSVC: TODO
 
 #include "env.cpp"
+#include "fontdata.cpp"
 #include "main.cpp"

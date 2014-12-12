@@ -18,7 +18,7 @@ Env envInit()
 	Vec2i reso(800, 800);
 
 	Env env;
-	env.cursorPos= Vec2f(0);
+	env.cursorPos= Vec2f(0, 0);
 	env.lmbDown= false;
 	env.winSize= reso;
 	env.quitRequested= false;
