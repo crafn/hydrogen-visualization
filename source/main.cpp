@@ -26,6 +26,10 @@ struct Program {
 
 	VolumeShader shader;
 	Font font;
+
+	float time;
+	float r, g, b;
+	int sampleCount;
 };
 
 const GLchar* g_vs= "\
@@ -54,7 +58,7 @@ vec2 sample(vec3 p) \
 { \
 	p.z += 0.2; \
 	float beam_e= \
-		abs(cos(p.z*10.0 - sign(p.z)*u_phase)*0.5 + 1.0)* \
+		abs(cos(p.z*10.0 - sign(p.z)*u_phase*10.0)*0.5 + 1.0)* \
 			0.001/(p.x*p.x + p.y*p.y + 0.001); \
 	float disc_e= \
 		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1); \
@@ -109,6 +113,14 @@ void init(Env& env, Program& prog)
 						g_font.size.x, g_font.size.y,
 						0, GL_ALPHA, GL_UNSIGNED_BYTE,
 						g_font.data);
+	}
+
+	{ // Program state
+		prog.time= 0.0;
+		prog.r= 0.4;
+		prog.g= 0.8;
+		prog.b= 1.0;
+		prog.sampleCount= 45;
 	}
 
 	{ // Shader
@@ -167,9 +179,6 @@ void quit(Env& env, Program& prog)
 
 void frame(const Env& env, Program& prog)
 {
-	static float setting_r= 0.3;
-	static float setting_g= 0.8;
-	static float setting_b= 1.0;
 
 	struct Slider {
 		const char* title;
@@ -180,7 +189,7 @@ void frame(const Env& env, Program& prog)
 		bool hover;
 
 		static float height() { return 0.05; }
-		static float width() { return 0.5; }
+		static float width() { return 0.65; }
 		static float top(std::size_t i) { return 1.0 - i*height(); }
 		static float bottom(std::size_t i) { return top(i + 1); }
 		bool pointInside(std::size_t i, Vec2f p) const
@@ -189,7 +198,10 @@ void frame(const Env& env, Program& prog)
 					p.y > bottom(i)	&& p.y < top(i);
 		}
 		float fraction() const
-		{ return (value - min)/(max - min); }
+		{
+			float f= (value - min)/(max - min);
+			return f < 1 ? f : 1;
+		}
 		float coordToValue(float x) const
 		{
 			return clamp((1.0 + x)/width()*(max - min) + min, min, max);
@@ -197,10 +209,10 @@ void frame(const Env& env, Program& prog)
 	};
 
 	static Slider sliders[]= {
-		{ "R",	0.0,		2.0, setting_r,	2,	false },
-		{ "G",	0.0,		2.0, setting_g,	2,	false },
-		{ "B",	0.0,		2.0, setting_b,	2,	false },
-		{ "Test- -?!", 0.0, 2.0, setting_r,	2,	false },
+		{ "Time",	0.0,	5.0,	prog.time,	2,	false },
+		{ "R",		0.0,	2.0,	prog.r,	2,	false },
+		{ "G",		0.0,	2.0,	prog.g,	2,	false },
+		{ "B",		0.0,	2.0,	prog.b,	2,	false },
 	};
 	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
 
@@ -230,15 +242,14 @@ void frame(const Env& env, Program& prog)
 		}
 	}
 
+	/// @todo dt
+	prog.time += 1.0/30.0;
+
 	glClear(GL_COLOR_BUFFER_BIT);
 	glViewport(0, 0, env.winSize.x, env.winSize.y);
 
 	{ // Draw volume
-		static float phase;
 		Program::VolumeShader& shd= prog.shader;
-
-		/// @todo *dt
-		phase += 0.3;
 
 		glDisable(GL_TEXTURE_2D);
 		glMatrixMode(GL_PROJECTION);
@@ -250,8 +261,8 @@ void frame(const Env& env, Program& prog)
 		glRotatef(rot.x*radToDeg, 0.0, -1.0, 0.0);
 
 		glUseProgram(shd.prog);
-		glUniform1f(shd.phaseLoc, phase);
-		glUniform3f(shd.colorLoc, setting_r, setting_g, setting_b);
+		glUniform1f(shd.phaseLoc, prog.time);
+		glUniform3f(shd.colorLoc, prog.r, prog.g, prog.b);
 
 		glBegin(GL_QUADS);
 			glVertex3f(-1, -1, 1);
@@ -273,7 +284,7 @@ void frame(const Env& env, Program& prog)
 
 		glBegin(GL_QUADS);
 			// Background
-			glColor4f(0.0, 0.0, 0.0, 0.3);
+			glColor4f(0.1, 0.1, 0.1, 0.3);
 			glVertex2f(-1.0, 1.0);
 			glVertex2f(-1.0, 1.0 - slider_count*Slider::height());
 			glVertex2f(Slider::width() - 1.0, 1.0 - slider_count*Slider::height());
