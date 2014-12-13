@@ -18,6 +18,12 @@ struct Program {
 		GLuint phaseLoc;
 		GLuint colorLoc;
 	};
+	struct VolumeFbo {
+		GLuint fboId;
+		GLuint texId;
+		Vec2i reso;
+		bool filtering;
+	};
 	struct Font {
 		GLuint texId;
 		Vec2f uv[256]; // Lower left corners of characters
@@ -25,11 +31,14 @@ struct Program {
 	};
 
 	VolumeShader shader;
+	VolumeFbo fbo;
 	Font font;
 
 	float time;
+	float sampleCount;
+	float resoMul;
+	float filtering;
 	float r, g, b;
-	int sampleCount;
 };
 
 const GLchar* g_vs= "\
@@ -45,13 +54,12 @@ void main() \
 \n";
 
 const GLchar* g_fs= "\
-#version 120\n\
 uniform float u_phase; \
 uniform vec3 u_color; \
 varying vec3 v_pos; \
 varying vec3 v_normal; \
 float rand(vec2 co){ \
-    return fract(sin(dot(co.xy ,vec2(12.9898,78.233))) * 43758.5453); \
+    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453); \
 } \
 /* x emission, y absorption */ \
 vec2 sample(vec3 p) \
@@ -71,7 +79,7 @@ void main() \
 	vec3 n= normalize(v_normal); \
 	vec3 color= u_color; \
 	float intensity= 0.0; \
-	const int steps= 45; \
+	const int steps= SAMPLE_COUNT; \
 	const float dl= 2.0/steps; \
 	for (int i= 0; i < steps; ++i) { \
 		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps); \
@@ -82,6 +90,89 @@ void main() \
 } \
 \n";
 
+Program::VolumeShader createShader(int sample_count)
+{
+	Program::VolumeShader shd;
+	{ // Vertex
+		shd.vs= glCreateShader(GL_VERTEX_SHADER);
+		glShaderSource(shd.vs, 1, &g_vs, NULL);
+		glCompileShader(shd.vs);
+		checkShaderStatus(shd.vs);
+	}
+	{ // Fragment
+		const std::size_t buf_size= 512;
+		char buf[buf_size];
+		std::sprintf(buf,
+			"#version 120\n"
+			"#define SAMPLE_COUNT %i\n", sample_count);
+		const GLchar* shader_src[]= { buf, g_fs };
+		const GLsizei shader_src_count= sizeof(shader_src)/sizeof(*shader_src);
+
+		shd.fs= glCreateShader(GL_FRAGMENT_SHADER);
+		glShaderSource(shd.fs, shader_src_count, shader_src, NULL);
+		glCompileShader(shd.fs);
+		checkShaderStatus(shd.fs);
+	}
+	{ // Shader program
+		shd.prog= glCreateProgram();
+		glAttachShader(shd.prog, shd.vs);
+		glAttachShader(shd.prog, shd.fs);
+		glLinkProgram(shd.prog);
+		checkProgramStatus(shd.prog);
+
+		shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
+		shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
+	}
+	return shd;
+}
+
+void destroyShader(Program::VolumeShader& shd)
+{
+	glDetachShader(shd.prog, shd.vs);
+	glDeleteShader(shd.vs);
+
+	glDetachShader(shd.prog, shd.fs);
+	glDeleteShader(shd.fs);
+
+	glDeleteProgram(shd.prog);
+}
+
+Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
+{
+	GLenum filter= filtering ? GL_LINEAR : GL_NEAREST;
+
+	checkGlErrors("1");
+	Program::VolumeFbo fbo;
+	fbo.reso= reso;
+	fbo.filtering= filtering;
+	glGenTextures(1, &fbo.texId);
+	glBindTexture(GL_TEXTURE_2D, fbo.texId);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+	glTexImage2D(	GL_TEXTURE_2D, 0, GL_RGB,
+					fbo.reso.x, fbo.reso.y,
+					0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+
+	checkGlErrors("2");
+	glGenFramebuffers(1, &fbo.fboId);
+	checkGlErrors("2.1");
+	glGenFramebuffers(1, &fbo.fboId);
+	glBindFramebuffer(GL_FRAMEBUFFER, fbo.fboId);
+	checkGlErrors("2.5");
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo.texId, 0);
+	checkGlErrors("3");
+	return fbo;
+}
+
+void destroyFbo(Program::VolumeFbo& fbo)
+{
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glDeleteFramebuffers(1, &fbo.fboId);
+	glDeleteTextures(1, &fbo.texId);
+}
+
 void init(Env& env, Program& prog)
 {
 	env= envInit();
@@ -89,14 +180,14 @@ void init(Env& env, Program& prog)
 
 	{ // Font
 		Program::Font& font= prog.font;
-		Vec2f char_size= casted<Vec2f>(g_font.charSize);
-		Vec2f font_size= casted<Vec2f>(g_font.size);
+		Vec2f char_size= cast<Vec2f>(g_font.charSize);
+		Vec2f font_size= cast<Vec2f>(g_font.size);
 		font.charUvSize= char_size/font_size; 
 
 		Vec2i cursor(0, g_font.size.y - g_font.charSize.y); // Lower-left origin
 		for (std::size_t i= 0; i < std::strlen(g_font.chars); ++i) {
 			unsigned char ch= g_font.chars[i];
-			font.uv[ch]= casted<Vec2f>(cursor)/font_size;
+			font.uv[ch]= cast<Vec2f>(cursor)/font_size;
 
 			cursor.x += g_font.charSize.x;
 			if (cursor.x + g_font.charSize.x > g_font.size.x) {
@@ -117,36 +208,15 @@ void init(Env& env, Program& prog)
 
 	{ // Program state
 		prog.time= 0.0;
+		prog.sampleCount= 40;
+		prog.resoMul= 0.5;
+		prog.filtering= 0.0;
 		prog.r= 0.4;
 		prog.g= 0.8;
 		prog.b= 1.0;
-		prog.sampleCount= 45;
-	}
 
-	{ // Shader
-		Program::VolumeShader& shd= prog.shader;
-		{ // Vertex
-			shd.vs= glCreateShader(GL_VERTEX_SHADER);
-			glShaderSource(shd.vs, 1, &g_vs, NULL);
-			glCompileShader(shd.vs);
-			checkShaderStatus(shd.vs);
-		}
-		{ // Fragment
-			shd.fs= glCreateShader(GL_FRAGMENT_SHADER);
-			glShaderSource(shd.fs, 1, &g_fs, NULL);
-			glCompileShader(shd.fs);
-			checkShaderStatus(shd.fs);
-		}
-		{ // Shader program
-			shd.prog= glCreateProgram();
-			glAttachShader(shd.prog, shd.vs);
-			glAttachShader(shd.prog, shd.fs);
-			glLinkProgram(shd.prog);
-			checkProgramStatus(shd.prog);
-
-			shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
-			shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
-		}
+		prog.shader= createShader(prog.sampleCount);
+		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
 	{ // Setup initial GL state
@@ -158,16 +228,8 @@ void init(Env& env, Program& prog)
 
 void quit(Env& env, Program& prog)
 {
-	{ // Shader
-		Program::VolumeShader& shd= prog.shader;
-		glDetachShader(shd.prog, shd.vs);
-		glDeleteShader(shd.vs);
-
-		glDetachShader(shd.prog, shd.fs);
-		glDeleteShader(shd.fs);
-
-		glDeleteProgram(shd.prog);
-	}
+	destroyFbo(prog.fbo);
+	destroyShader(prog.shader);
 
 	{ // Font
 		Program::Font& font= prog.font;
@@ -179,14 +241,13 @@ void quit(Env& env, Program& prog)
 
 void frame(const Env& env, Program& prog)
 {
-
 	struct Slider {
 		const char* title;
 		float min;
 		float max;
 		float& value;
 		int decimals;
-		bool hover;
+		bool recompile;
 
 		static float height() { return 0.05; }
 		static float width() { return 0.65; }
@@ -204,17 +265,22 @@ void frame(const Env& env, Program& prog)
 		}
 		float coordToValue(float x) const
 		{
-			return clamp((1.0 + x)/width()*(max - min) + min, min, max);
+			float v= clamp((1.0 + x)/width()*(max - min) + min, min, max);
+			return round(v, decimals);
 		}
 	};
 
 	static Slider sliders[]= {
-		{ "Time",	0.0,	5.0,	prog.time,	2,	false },
-		{ "R",		0.0,	2.0,	prog.r,	2,	false },
-		{ "G",		0.0,	2.0,	prog.g,	2,	false },
-		{ "B",		0.0,	2.0,	prog.b,	2,	false },
+		{ "Time",		0.0,	5.0,	prog.time,			6, false },
+		{ "Samples",	5,		150,	prog.sampleCount,	0, true },
+		{ "Resolution",	0.01,	1.0,	prog.resoMul,		6, false },
+		{ "Filtering",	0,		1,		prog.filtering,		0, false },
+		{ "R",			0.0,	2.0,	prog.r,				6, false },
+		{ "G",			0.0,	2.0,	prog.g,				6, false },
+		{ "B",			0.0,	2.0,	prog.b,				6, false },
 	};
 	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
+	bool slider_hover[slider_count]= {};
 
 	static Vec2f prev_delta;
 	static Vec2f rot;
@@ -224,12 +290,21 @@ void frame(const Env& env, Program& prog)
 		for (std::size_t i= 0; i < slider_count; ++i) {
 			Slider& s= sliders[i];
 			if (s.pointInside(i, env.anchorPos)) {
-				if (env.lmbDown)
-					s.value= s.coordToValue(env.cursorPos.x);
-				s.hover= true;
+				bool value_changed= false;
+				if (env.lmbDown) {
+					float new_value= s.coordToValue(env.cursorPos.x);
+					value_changed= new_value != s.value;
+					s.value= new_value;
+				}
+				slider_hover[i]= true;
 				slider_activity= true;
+
+				if (value_changed && s.recompile) {
+					destroyShader(prog.shader);
+					prog.shader= createShader(prog.sampleCount);
+				}
 			} else {
-				s.hover= false;
+				slider_hover[i]= false;
 			}
 		}
 
@@ -242,19 +317,31 @@ void frame(const Env& env, Program& prog)
 		}
 	}
 
+	{ // Adjust FBO
+		Vec2i volume_reso= cast<Vec2i>(cast<Vec2f>(env.winSize)*prog.resoMul);
+		bool volume_filtering= prog.filtering > 0.5;
+		if (volume_reso != prog.fbo.reso || volume_filtering != prog.fbo.filtering) {
+			destroyFbo(prog.fbo);
+			prog.fbo= createFbo(volume_reso, volume_filtering);
+		}
+	}
+
 	/// @todo dt
 	prog.time += 1.0/30.0;
 
 	glClear(GL_COLOR_BUFFER_BIT);
-	glViewport(0, 0, env.winSize.x, env.winSize.y);
 
-	{ // Draw volume
+	/// @todo Fixed pipeline starts to feel a bit clumsy
+	{ // Draw volume	
+		// Draw to fbo
+		glBindFramebuffer(GL_FRAMEBUFFER, prog.fbo.fboId);
+		glViewport(0, 0, prog.fbo.reso.x, prog.fbo.reso.y);
+		glDisable(GL_TEXTURE_2D);
+
 		Program::VolumeShader& shd= prog.shader;
 
-		glDisable(GL_TEXTURE_2D);
 		glMatrixMode(GL_PROJECTION);
 		glLoadIdentity();
-
 		glMatrixMode(GL_MODELVIEW);
 		// Trackball-style rotation
 		glRotatef(rot.y*radToDeg, cos(rot.x), 0.0, sin(rot.x));
@@ -270,9 +357,30 @@ void frame(const Env& env, Program& prog)
 			glVertex3f(1,  1, 1);
 			glVertex3f(-1, 1, 1);
 		glEnd();
+
+		// Draw scaled fbo texture
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glViewport(0, 0, env.winSize.x, env.winSize.y);
+		glEnable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, prog.fbo.texId);
+		glMatrixMode(GL_PROJECTION);
+		glLoadIdentity();
+		glMatrixMode(GL_MODELVIEW);
+		glLoadIdentity();
+		glMatrixMode(GL_TEXTURE);
+		glLoadIdentity();
+		glUseProgram(0);
+		glBegin(GL_QUADS);
+			glTexCoord2f(0, 0); glVertex2f(-1, -1);
+			glTexCoord2f(1, 0); glVertex2f(1, -1);
+			glTexCoord2f(1, 1); glVertex2f(1, 1);
+			glTexCoord2f(0, 1); glVertex2f(-1, 1);
+		glEnd();
 	}
 
 	{ // Draw gui
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glViewport(0, 0, env.winSize.x, env.winSize.y);
 		glMatrixMode(GL_TEXTURE);
 		glLoadIdentity();
 		glScalef(1.0, -1.0, 1.0); // Textures are upside-down
@@ -297,7 +405,7 @@ void frame(const Env& env, Program& prog)
 				float bottom= s.bottom(i);
 				float width= s.width()*s.fraction();
 
-				if (!s.hover)
+				if (!slider_hover[i])
 					glColor4f(0.3, 0.3, 0.3, 0.6);
 				else
 					glColor4f(1.0, 1.0, 1.0, 0.8);
@@ -320,7 +428,7 @@ void frame(const Env& env, Program& prog)
 
 			for (std::size_t c_i= 0; c_i < std::strlen(s.title); ++c_i) {
 				unsigned char ch= s.title[c_i];
-				Vec2f ch_size= casted<Vec2f>(g_font.charSize)/casted<Vec2f>(env.winSize)*2.0;
+				Vec2f ch_size= cast<Vec2f>(g_font.charSize)/cast<Vec2f>(env.winSize)*2.0;
 				Vec2f ch_pos(pos.x + ch_size.x*c_i, pos.y);
 
 				Vec2f ch_ur= ch_pos + ch_size;
@@ -334,6 +442,10 @@ void frame(const Env& env, Program& prog)
 		}
 		glEnd();
 	}
+
+#ifndef NDEBUG
+	checkGlErrors("frame end");
+#endif
 } 
 
 } // qm

@@ -4,7 +4,7 @@
 #include <GL/gl.h>
 #include "env.hpp"
 
-// Partial OpenGL 2.1 interface
+// Partial OpenGL 2.1 interface (and some GL 3 too..)
 
 typedef char GLchar;
 
@@ -49,6 +49,16 @@ GlUniform1f glUniform1f;
 typedef void (*GlUniform3f)(GLuint, GLfloat, GLfloat, GLfloat);
 GlUniform3f glUniform3f;
 
+// Required GL 3 funcs
+typedef void (*GlGenFramebuffers)(GLsizei, GLuint*);
+GlGenFramebuffers glGenFramebuffers;
+typedef void (*GlBindFramebuffer)(GLenum, GLuint);
+GlBindFramebuffer glBindFramebuffer;
+typedef void (*GlFramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
+GlFramebufferTexture2D glFramebufferTexture2D;
+typedef void (*GlDeleteFramebuffers)(GLsizei, GLuint*);
+GlDeleteFramebuffers glDeleteFramebuffers;
+
 namespace qm {
 
 inline
@@ -71,6 +81,10 @@ void queryGlFuncs()
 	glGetUniformLocation= (GlGetUniformLocation)queryGlFunc("glGetUniformLocation");
 	glUniform1f= (GlUniform1f)queryGlFunc("glUniform1f");
 	glUniform3f= (GlUniform3f)queryGlFunc("glUniform3f");
+	glGenFramebuffers= (GlGenFramebuffers)queryGlFunc("glGenFramebuffers");
+	glBindFramebuffer= (GlBindFramebuffer)queryGlFunc("glBindFramebuffer");
+	glFramebufferTexture2D= (GlFramebufferTexture2D)queryGlFunc("glFramebufferTexture2D");
+	glDeleteFramebuffers= (GlDeleteFramebuffers)queryGlFunc("glDeleteFramebuffers");
 }
 
 inline
@@ -99,6 +113,14 @@ void checkProgramStatus(GLuint prog)
 		std::printf("Program link failed: %s", log);
 		std::abort();
 	}
+}
+
+inline
+void checkGlErrors(const char* tag)
+{
+	GLenum error= glGetError();
+	if (error!= GL_NO_ERROR)
+		std::printf("GL Error (%s): %i\n", tag, error);
 }
 
 } // qm
