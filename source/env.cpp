@@ -77,8 +77,7 @@ Env envInit()
 		}
 	};
 
-	MSG msg= {0};
-	WNDCLASS wc= {0}; 
+	WNDCLASS wc= WNDCLASS(); 
 	wc.lpfnWndProc= WndProc::call;
 	wc.hInstance= GetModuleHandle(0);
 	wc.hbrBackground= (HBRUSH)(COLOR_BACKGROUND);
@@ -177,7 +176,6 @@ void envUpdate(Env& env)
 	SwapBuffers(env.hDC);
 
 	MSG msg;
-	BOOL bRet;
 	while(PeekMessage(&msg, env.hWnd, 0, 0, PM_REMOVE) > 0) { 
 		TranslateMessage(&msg); 
 		DispatchMessage(&msg); 
