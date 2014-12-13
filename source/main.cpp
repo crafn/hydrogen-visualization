@@ -141,7 +141,6 @@ Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
 {
 	GLenum filter= filtering ? GL_LINEAR : GL_NEAREST;
 
-	checkGlErrors("1");
 	Program::VolumeFbo fbo;
 	fbo.reso= reso;
 	fbo.filtering= filtering;
@@ -155,14 +154,10 @@ Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
 					fbo.reso.x, fbo.reso.y,
 					0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
 
-	checkGlErrors("2");
 	glGenFramebuffers(1, &fbo.fboId);
-	checkGlErrors("2.1");
 	glGenFramebuffers(1, &fbo.fboId);
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo.fboId);
-	checkGlErrors("2.5");
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo.texId, 0);
-	checkGlErrors("3");
 	return fbo;
 }
 
