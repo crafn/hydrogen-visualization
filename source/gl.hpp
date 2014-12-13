@@ -4,16 +4,15 @@
 #include <GL/gl.h>
 #include "env.hpp"
 
-// Partial OpenGL 2.1 interface (and some GL 3 too..)
-
-typedef char GLchar;
+// Required GL 2.1 features
 
 #define GL_FRAGMENT_SHADER 0x8B30
 #define GL_VERTEX_SHADER 0x8B31
 #define GL_COMPILE_STATUS 0x8B81
 #define GL_LINK_STATUS 0x8B82
 
-// Required GL 2.1 funcs
+typedef char GLchar;
+
 typedef GLuint (*GlCreateShader)(GLenum);
 GlCreateShader glCreateShader;
 typedef void (*GlShaderSource)(GLuint, GLsizei, const GLchar**, const GLint*);
@@ -49,7 +48,11 @@ GlUniform1f glUniform1f;
 typedef void (*GlUniform3f)(GLuint, GLfloat, GLfloat, GLfloat);
 GlUniform3f glUniform3f;
 
-// Required GL 3 funcs
+// Required GL 3 features
+
+#define GL_FRAMEBUFFER                    0x8D40
+#define GL_COLOR_ATTACHMENT0              0x8CE0
+
 typedef void (*GlGenFramebuffers)(GLsizei, GLuint*);
 GlGenFramebuffers glGenFramebuffers;
 typedef void (*GlBindFramebuffer)(GLenum, GLuint);
