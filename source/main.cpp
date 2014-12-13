@@ -15,6 +15,7 @@ struct Program {
 		GLuint vs;
 		GLuint fs;
 		GLuint prog;
+		GLuint timeLoc;
 		GLuint phaseLoc;
 		GLuint colorLoc;
 	};
@@ -33,12 +34,14 @@ struct Program {
 	VolumeShader shader;
 	VolumeFbo fbo;
 	Font font;
-
 	float time;
+
+	float phase;
 	float sampleCount;
 	float resoMul;
 	float filtering;
 	float r, g, b;
+	float quantumN;
 };
 
 const GLchar* g_vs= "\
@@ -55,6 +58,7 @@ void main() \
 
 const GLchar* g_fs= "\
 uniform float u_phase; \
+uniform float u_time; \
 uniform vec3 u_color; \
 varying vec3 v_pos; \
 varying vec3 v_normal; \
@@ -66,7 +70,7 @@ vec2 sample(vec3 p) \
 { \
 	p.z += 0.2; \
 	float beam_e= \
-		abs(cos(p.z*10.0 - sign(p.z)*u_phase*10.0)*0.5 + 1.0)* \
+		abs(cos(p.z*10.0 - sign(p.z)*u_phase*10.0)*0.5*QN + 1.0)* \
 			0.001/(p.x*p.x + p.y*p.y + 0.001); \
 	float disc_e= \
 		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1); \
@@ -85,12 +89,12 @@ void main() \
 		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps); \
 		intensity= max(0, intensity + (s.x - s.y*intensity)*dl); \
 	} \
-	intensity += rand(v_pos.xy + vec2(u_phase/10000.0, 0))*0.02; \
+	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.02; \
 	gl_FragColor= vec4(color*intensity, 1.0); \
 } \
 \n";
 
-Program::VolumeShader createShader(int sample_count)
+Program::VolumeShader createShader(int sample_count, int qn)
 {
 	Program::VolumeShader shd;
 	{ // Vertex
@@ -102,9 +106,13 @@ Program::VolumeShader createShader(int sample_count)
 	{ // Fragment
 		const std::size_t buf_size= 512;
 		char buf[buf_size];
-		std::sprintf(buf,
+		std::snprintf(buf,
+			buf_size,
 			"#version 120\n"
-			"#define SAMPLE_COUNT %i\n", sample_count);
+			"#define SAMPLE_COUNT %i\n"
+			"#define QN %i\n",
+			sample_count,
+			qn);
 		const GLchar* shader_src[]= { buf, g_fs };
 		const GLsizei shader_src_count= sizeof(shader_src)/sizeof(*shader_src);
 
@@ -120,6 +128,7 @@ Program::VolumeShader createShader(int sample_count)
 		glLinkProgram(shd.prog);
 		checkProgramStatus(shd.prog);
 
+		shd.timeLoc= glGetUniformLocation(shd.prog, "u_time");
 		shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
 		shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
 	}
@@ -203,14 +212,16 @@ void init(Env& env, Program& prog)
 
 	{ // Program state
 		prog.time= 0.0;
+		prog.phase= 0.0;
 		prog.sampleCount= 40;
 		prog.resoMul= 0.5;
 		prog.filtering= 0.0;
 		prog.r= 0.4;
 		prog.g= 0.8;
 		prog.b= 1.0;
+		prog.quantumN= 1;
 
-		prog.shader= createShader(prog.sampleCount);
+		prog.shader= createShader(prog.sampleCount, prog.quantumN);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -266,13 +277,14 @@ void frame(const Env& env, Program& prog)
 	};
 
 	static Slider sliders[]= {
-		{ "Time",		0.0,	5.0,	prog.time,			6, false },
+		{ "Phase",		0.0,	5.0,	prog.phase,			3, false },
 		{ "Samples",	5,		150,	prog.sampleCount,	0, true },
-		{ "Resolution",	0.01,	1.0,	prog.resoMul,		6, false },
+		{ "Resolution",	0.01,	1.0,	prog.resoMul,		2, false },
 		{ "Filtering",	0,		1,		prog.filtering,		0, false },
-		{ "R",			0.0,	2.0,	prog.r,				6, false },
-		{ "G",			0.0,	2.0,	prog.g,				6, false },
-		{ "B",			0.0,	2.0,	prog.b,				6, false },
+		{ "R",			0.0,	2.0,	prog.r,				3, false },
+		{ "G",			0.0,	2.0,	prog.g,				3, false },
+		{ "B",			0.0,	2.0,	prog.b,				3, false },
+		{ "Quantum n",	1,		50,		prog.quantumN,		0, true },
 	};
 	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
 	bool slider_hover[slider_count]= {};
@@ -296,7 +308,7 @@ void frame(const Env& env, Program& prog)
 
 				if (value_changed && s.recompile) {
 					destroyShader(prog.shader);
-					prog.shader= createShader(prog.sampleCount);
+					prog.shader= createShader(prog.sampleCount, prog.quantumN);
 				}
 			} else {
 				slider_hover[i]= false;
@@ -312,6 +324,14 @@ void frame(const Env& env, Program& prog)
 		}
 	}
 
+	// Slider texts
+	const std::size_t slider_text_buf_size= 128;
+	char slider_text[slider_count][slider_text_buf_size]= {};
+	for (std::size_t i= 0; i < slider_count; ++i) {
+		std::snprintf(	slider_text[i], slider_text_buf_size,
+						"%s - %.*f", sliders[i].title, sliders[i].decimals, sliders[i].value);
+	}
+
 	{ // Adjust FBO
 		Vec2i volume_reso= cast<Vec2i>(cast<Vec2f>(env.winSize)*prog.resoMul);
 		bool volume_filtering= prog.filtering > 0.5;
@@ -323,6 +343,7 @@ void frame(const Env& env, Program& prog)
 
 	/// @todo dt
 	prog.time += 1.0/30.0;
+	prog.phase += 1.0/30.0;
 
 	glClear(GL_COLOR_BUFFER_BIT);
 
@@ -343,7 +364,8 @@ void frame(const Env& env, Program& prog)
 		glRotatef(rot.x*radToDeg, 0.0, -1.0, 0.0);
 
 		glUseProgram(shd.prog);
-		glUniform1f(shd.phaseLoc, prog.time);
+		glUniform1f(shd.timeLoc, prog.time);
+		glUniform1f(shd.phaseLoc, prog.phase);
 		glUniform3f(shd.colorLoc, prog.r, prog.g, prog.b);
 
 		glBegin(GL_QUADS);
@@ -403,7 +425,7 @@ void frame(const Env& env, Program& prog)
 				if (!slider_hover[i])
 					glColor4f(0.3, 0.3, 0.3, 0.6);
 				else
-					glColor4f(1.0, 1.0, 1.0, 0.8);
+					glColor4f(0.5, 0.5, 0.5, 0.8);
 
 				glVertex2f(-1.0, top);
 				glVertex2f(-1.0, bottom);
@@ -421,8 +443,8 @@ void frame(const Env& env, Program& prog)
 			Slider& s= sliders[s_i];
 			Vec2f pos= fitToGrid(Vec2f(-0.98, s.bottom(s_i)), env.winSize);
 
-			for (std::size_t c_i= 0; c_i < std::strlen(s.title); ++c_i) {
-				unsigned char ch= s.title[c_i];
+			for (std::size_t c_i= 0; c_i < std::strlen(slider_text[s_i]); ++c_i) {
+				unsigned char ch= slider_text[s_i][c_i];
 				Vec2f ch_size= cast<Vec2f>(g_font.charSize)/cast<Vec2f>(env.winSize)*2.0;
 				Vec2f ch_pos(pos.x + ch_size.x*c_i, pos.y);
 
