@@ -41,12 +41,14 @@ typedef void (*GlDeleteShader)(GLuint);
 GlDeleteShader glDeleteShader;
 typedef void (*GlDeleteProgram)(GLuint);
 GlDeleteProgram glDeleteProgram;
-typedef GLuint (*GlGetUniformLocation)(GLuint, const GLchar*);
+typedef GLint (*GlGetUniformLocation)(GLuint, const GLchar*);
 GlGetUniformLocation glGetUniformLocation;
 typedef void (*GlUniform1f)(GLuint, GLfloat);
 GlUniform1f glUniform1f;
 typedef void (*GlUniform3f)(GLuint, GLfloat, GLfloat, GLfloat);
 GlUniform3f glUniform3f;
+typedef void (*GlUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
+GlUniformMatrix4fv glUniformMatrix4fv;
 
 // Required GL 3 features
 
@@ -84,6 +86,7 @@ void queryGlFuncs()
 	glGetUniformLocation= (GlGetUniformLocation)queryGlFunc("glGetUniformLocation");
 	glUniform1f= (GlUniform1f)queryGlFunc("glUniform1f");
 	glUniform3f= (GlUniform3f)queryGlFunc("glUniform3f");
+	glUniformMatrix4fv= (GlUniformMatrix4fv)queryGlFunc("glUniformMatrix4fv");
 	glGenFramebuffers= (GlGenFramebuffers)queryGlFunc("glGenFramebuffers");
 	glBindFramebuffer= (GlBindFramebuffer)queryGlFunc("glBindFramebuffer");
 	glFramebufferTexture2D= (GlFramebufferTexture2D)queryGlFunc("glFramebufferTexture2D");
@@ -124,6 +127,44 @@ void checkGlErrors(const char* tag)
 	GLenum error= glGetError();
 	if (error!= GL_NO_ERROR)
 		std::printf("GL Error (%s): %i\n", tag, error);
+}
+
+inline
+void createGlShaderProgram(	GLuint& prog, GLuint& vs, GLuint& fs,
+							GLsizei vs_count, const GLchar** vs_src,
+							GLsizei fs_count, const GLchar** fs_src)
+{
+	{ // Vertex
+		vs= glCreateShader(GL_VERTEX_SHADER);
+		glShaderSource(vs, vs_count, vs_src, NULL);
+		glCompileShader(vs);
+		checkShaderStatus(vs);
+	}
+	{ // Fragment
+		fs= glCreateShader(GL_FRAGMENT_SHADER);
+		glShaderSource(fs, fs_count, fs_src, NULL);
+		glCompileShader(fs);
+		checkShaderStatus(fs);
+	}
+	{ // Shader program
+		prog= glCreateProgram();
+		glAttachShader(prog, vs);
+		glAttachShader(prog, fs);
+		glLinkProgram(prog);
+		checkProgramStatus(prog);
+	}
+}
+
+inline
+void destroyGlShaderProgram(GLuint prog, GLuint vs, GLuint fs)
+{
+	glDetachShader(prog, vs);
+	glDeleteShader(vs);
+
+	glDetachShader(prog, fs);
+	glDeleteShader(fs);
+
+	glDeleteProgram(prog);
 }
 
 } // qm

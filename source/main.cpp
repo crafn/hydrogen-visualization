@@ -15,9 +15,10 @@ struct Program {
 		GLuint vs;
 		GLuint fs;
 		GLuint prog;
-		GLuint timeLoc;
-		GLuint phaseLoc;
-		GLuint colorLoc;
+		GLint timeLoc;
+		GLint phaseLoc;
+		GLint colorLoc;
+		GLint transformLoc;
 	};
 	struct VolumeFbo {
 		GLuint fboId;
@@ -30,10 +31,16 @@ struct Program {
 		Vec2f uv[256]; // Lower left corners of characters
 		Vec2f charUvSize;
 	};
+	struct GuiShader {
+		GLuint vs;
+		GLuint fs;
+		GLuint prog;
+	};
 
 	VolumeShader shader;
 	VolumeFbo fbo;
 	Font font;
+	GuiShader guiShader;
 	float time;
 
 	float phase;
@@ -44,106 +51,76 @@ struct Program {
 	float quantumN;
 };
 
-const GLchar* g_vs= "\
-#version 120\n\
-varying vec3 v_pos; \
-varying vec3 v_normal; \
-void main() \
-{ \
-    gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0); \
-	v_pos= (gl_ModelViewMatrix*gl_Vertex).xyz; \
-	v_normal= mat3(gl_ModelViewMatrix)*vec3(gl_Vertex.xy, -1.0); \
-} \
-\n";
-
-const GLchar* g_fs= "\
-uniform float u_phase; \
-uniform float u_time; \
-uniform vec3 u_color; \
-varying vec3 v_pos; \
-varying vec3 v_normal; \
-float rand(vec2 co){ \
-    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453); \
-} \
-/* x emission, y absorption */ \
-vec2 sample(vec3 p) \
-{ \
-	p.z += 0.2; \
-	float beam_e= \
-		abs(cos(p.z*10.0 - sign(p.z)*u_phase*10.0)*0.5*QN + 1.0)* \
-			0.001/(p.x*p.x + p.y*p.y + 0.001); \
-	float disc_e= \
-		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1); \
-	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0); \
-	float a= clamp(hole_a, 0.0, 1.0); \
-    return vec2((disc_e + beam_e)*(1 - a), a + disc_e*7.0)*25.0; \
-} \
-void main() \
-{ \
-	vec3 n= normalize(v_normal); \
-	vec3 color= u_color; \
-	float intensity= 0.0; \
-	const int steps= SAMPLE_COUNT; \
-	const float dl= 2.0/steps; \
-	for (int i= 0; i < steps; ++i) { \
-		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps); \
-		intensity= max(0, intensity + (s.x - s.y*intensity)*dl); \
-	} \
-	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.02; \
-	gl_FragColor= vec4(color*intensity, 1.0); \
-} \
-\n";
-
-Program::VolumeShader createShader(int sample_count, int qn)
+Program::VolumeShader createVolumeShader(int sample_count, int qn)
 {
+	const GLchar* vs_src=
+		"#version 120\n"
+		"uniform mat4 u_transform;"
+		"varying vec3 v_pos;"
+		"varying vec3 v_normal;"
+		"void main()"
+		"{"
+		"    gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0);"
+		"	v_pos= (u_transform*gl_Vertex).xyz;"
+		"	v_normal= mat3(u_transform)*vec3(gl_Vertex.xy, -1.0);"
+		"}"
+		"\n";
+	const GLchar* fs_template_src=
+		"uniform float u_phase;"
+		"uniform float u_time;"
+		"uniform vec3 u_color;"
+		"varying vec3 v_pos;"
+		"varying vec3 v_normal;"
+		"float rand(vec2 co){"
+		"    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453);"
+		"}"
+		"vec2 sample(vec3 p)" // x emission, y absorption
+		"{"
+		"	p.z += 0.2;"
+		"	float beam_e="
+		"		abs(cos(p.z*10.0 - sign(p.z)*u_phase*10.0)*0.5*QN + 1.0)*"
+		"			0.001/(p.x*p.x + p.y*p.y + 0.001);"
+		"	float disc_e="
+		"		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1);"
+		"	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0);"
+		"	float a= clamp(hole_a, 0.0, 1.0);"
+		"    return vec2((disc_e + beam_e)*(1 - a), a + disc_e*7.0)*25.0;"
+		"}"
+		"void main()"
+		"{"
+		"	vec3 n= normalize(v_normal);"
+		"	vec3 color= u_color;"
+		"	float intensity= 0.0;"
+		"	const int steps= SAMPLE_COUNT;"
+		"	const float dl= 2.0/steps;"
+		"	for (int i= 0; i < steps; ++i) {"
+		"		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps);"
+		"		intensity= max(0, intensity + (s.x - s.y*intensity)*dl);"
+		"	}"
+		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.02;"
+		"	gl_FragColor= vec4(color*intensity, 1.0);"
+		"}"
+		"\n";
+
+	const std::size_t buf_size= 512;
+	char buf[buf_size];
+	std::snprintf(buf,
+		buf_size,
+		"#version 120\n"
+		"#define SAMPLE_COUNT %i\n"
+		"#define QN %i\n",
+		sample_count,
+		qn);
+	const GLchar* fs_src[]= { buf, fs_template_src };
+	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
+
 	Program::VolumeShader shd;
-	{ // Vertex
-		shd.vs= glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(shd.vs, 1, &g_vs, NULL);
-		glCompileShader(shd.vs);
-		checkShaderStatus(shd.vs);
-	}
-	{ // Fragment
-		const std::size_t buf_size= 512;
-		char buf[buf_size];
-		std::snprintf(buf,
-			buf_size,
-			"#version 120\n"
-			"#define SAMPLE_COUNT %i\n"
-			"#define QN %i\n",
-			sample_count,
-			qn);
-		const GLchar* shader_src[]= { buf, g_fs };
-		const GLsizei shader_src_count= sizeof(shader_src)/sizeof(*shader_src);
-
-		shd.fs= glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(shd.fs, shader_src_count, shader_src, NULL);
-		glCompileShader(shd.fs);
-		checkShaderStatus(shd.fs);
-	}
-	{ // Shader program
-		shd.prog= glCreateProgram();
-		glAttachShader(shd.prog, shd.vs);
-		glAttachShader(shd.prog, shd.fs);
-		glLinkProgram(shd.prog);
-		checkProgramStatus(shd.prog);
-
-		shd.timeLoc= glGetUniformLocation(shd.prog, "u_time");
-		shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
-		shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
-	}
+	createGlShaderProgram(shd.prog, shd.vs, shd.fs, 1, &vs_src, fs_src_count, fs_src);
+	shd.timeLoc= glGetUniformLocation(shd.prog, "u_time");
+	shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
+	shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
+	shd.transformLoc= glGetUniformLocation(shd.prog, "u_transform");
 	return shd;
-}
-
-void destroyShader(Program::VolumeShader& shd)
-{
-	glDetachShader(shd.prog, shd.vs);
-	glDeleteShader(shd.vs);
-
-	glDetachShader(shd.prog, shd.fs);
-	glDeleteShader(shd.fs);
-
-	glDeleteProgram(shd.prog);
 }
 
 Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
@@ -210,6 +187,23 @@ void init(Env& env, Program& prog)
 						g_font.data);
 	}
 
+	{ // Gui shader
+		const GLchar* vs_src=
+			"#version 120\n"
+			"varying vec2 v_uv;"
+			"void main() {"
+			"	v_uv= vec2(gl_MultiTexCoord0.x, 1.0 - gl_MultiTexCoord0.y);"
+			"	gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0);"
+			"}\n";
+		const GLchar* fs_src=
+			"#version 120\n"
+			"varying vec2 v_uv;"
+			"void main() { gl_FragColor= vec4(1.0, 0.5, 0.5, 0.5); }\n";
+
+		Program::GuiShader& shd= prog.guiShader;
+		createGlShaderProgram(shd.prog, shd.vs, shd.fs, 1, &vs_src, 1, &fs_src);
+	}
+
 	{ // Program state
 		prog.time= 0.0;
 		prog.phase= 0.0;
@@ -221,7 +215,7 @@ void init(Env& env, Program& prog)
 		prog.b= 1.0;
 		prog.quantumN= 1;
 
-		prog.shader= createShader(prog.sampleCount, prog.quantumN);
+		prog.shader= createVolumeShader(prog.sampleCount, prog.quantumN);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -235,7 +229,12 @@ void init(Env& env, Program& prog)
 void quit(Env& env, Program& prog)
 {
 	destroyFbo(prog.fbo);
-	destroyShader(prog.shader);
+	destroyGlShaderProgram(	prog.shader.prog,
+							prog.shader.vs,
+							prog.shader.fs);
+	destroyGlShaderProgram(	prog.guiShader.prog,
+							prog.guiShader.vs,
+							prog.guiShader.fs);
 
 	{ // Font
 		Program::Font& font= prog.font;
@@ -307,8 +306,11 @@ void frame(const Env& env, Program& prog)
 				slider_activity= true;
 
 				if (value_changed && s.recompile) {
-					destroyShader(prog.shader);
-					prog.shader= createShader(prog.sampleCount, prog.quantumN);
+					destroyGlShaderProgram(	prog.shader.prog,
+											prog.shader.vs,
+											prog.shader.fs);
+					prog.shader=
+						createVolumeShader(prog.sampleCount, prog.quantumN);
 				}
 			} else {
 				slider_hover[i]= false;
@@ -354,19 +356,22 @@ void frame(const Env& env, Program& prog)
 		glViewport(0, 0, prog.fbo.reso.x, prog.fbo.reso.y);
 		glDisable(GL_TEXTURE_2D);
 
+		float s1= sin(rot.x), s2= sin(rot.y);
+		float c1= cos(rot.x), c2= cos(rot.y);
+		// Turntable-style rotation
+		float transform[16]= {
+			c1,			0,		s1,	0,
+			-s1*s2,		c2,		c1*s2,	0,
+			-c2*s1,		-s2,	c2*c1,	0,
+			0,			0,		0,		1
+		};
+
 		Program::VolumeShader& shd= prog.shader;
-
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-		glMatrixMode(GL_MODELVIEW);
-		// Trackball-style rotation
-		glRotatef(rot.y*radToDeg, cos(rot.x), 0.0, sin(rot.x));
-		glRotatef(rot.x*radToDeg, 0.0, -1.0, 0.0);
-
 		glUseProgram(shd.prog);
 		glUniform1f(shd.timeLoc, prog.time);
 		glUniform1f(shd.phaseLoc, prog.phase);
 		glUniform3f(shd.colorLoc, prog.r, prog.g, prog.b);
+		glUniformMatrix4fv(shd.transformLoc, 1, GL_FALSE, transform);
 
 		glBegin(GL_QUADS);
 			glVertex3f(-1, -1, 1);
@@ -380,12 +385,6 @@ void frame(const Env& env, Program& prog)
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
 		glEnable(GL_TEXTURE_2D);
 		glBindTexture(GL_TEXTURE_2D, prog.fbo.texId);
-		glMatrixMode(GL_PROJECTION);
-		glLoadIdentity();
-		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
-		glMatrixMode(GL_TEXTURE);
-		glLoadIdentity();
 		glUseProgram(0);
 		glBegin(GL_QUADS);
 			glTexCoord2f(0, 0); glVertex2f(-1, -1);
@@ -398,13 +397,8 @@ void frame(const Env& env, Program& prog)
 	{ // Draw gui
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
-		glMatrixMode(GL_TEXTURE);
-		glLoadIdentity();
-		glScalef(1.0, -1.0, 1.0); // Textures are upside-down
 
-		glMatrixMode(GL_MODELVIEW);
-		glLoadIdentity();
-		glUseProgram(0);
+		glUseProgram(prog.guiShader.prog);
 		glDisable(GL_TEXTURE_2D);
 
 		glBegin(GL_QUADS);
