@@ -10,6 +10,7 @@ struct FontData {
 	Vec2i charSize;
 	Vec2i size;
 	const unsigned char* data;
+	Vec2i whitePixel;
 };
 
 extern const FontData g_font;

@@ -47,8 +47,12 @@ typedef void (*GlUniform1f)(GLuint, GLfloat);
 GlUniform1f glUniform1f;
 typedef void (*GlUniform3f)(GLuint, GLfloat, GLfloat, GLfloat);
 GlUniform3f glUniform3f;
+typedef void (*GlUniform4f)(GLuint, GLfloat, GLfloat, GLfloat, GLfloat);
+GlUniform4f glUniform4f;
 typedef void (*GlUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
 GlUniformMatrix4fv glUniformMatrix4fv;
+typedef void (*GlUniform1i)(GLint, GLint);
+GlUniform1i glUniform1i;
 
 // Required GL 3 features
 
@@ -86,7 +90,9 @@ void queryGlFuncs()
 	glGetUniformLocation= (GlGetUniformLocation)queryGlFunc("glGetUniformLocation");
 	glUniform1f= (GlUniform1f)queryGlFunc("glUniform1f");
 	glUniform3f= (GlUniform3f)queryGlFunc("glUniform3f");
+	glUniform4f= (GlUniform4f)queryGlFunc("glUniform4f");
 	glUniformMatrix4fv= (GlUniformMatrix4fv)queryGlFunc("glUniformMatrix4fv");
+	glUniform1i= (GlUniform1i)queryGlFunc("glUniform1i");
 	glGenFramebuffers= (GlGenFramebuffers)queryGlFunc("glGenFramebuffers");
 	glBindFramebuffer= (GlBindFramebuffer)queryGlFunc("glBindFramebuffer");
 	glFramebufferTexture2D= (GlFramebufferTexture2D)queryGlFunc("glFramebufferTexture2D");

@@ -30,11 +30,14 @@ struct Program {
 		GLuint texId;
 		Vec2f uv[256]; // Lower left corners of characters
 		Vec2f charUvSize;
+		Vec2f whiteTexelUv;
 	};
 	struct GuiShader {
 		GLuint vs;
 		GLuint fs;
 		GLuint prog;
+		GLint texLoc;
+		GLint colorLoc;
 	};
 
 	VolumeShader shader;
@@ -43,6 +46,7 @@ struct Program {
 	GuiShader guiShader;
 	float time;
 
+	// Slider settings
 	float phase;
 	float sampleCount;
 	float resoMul;
@@ -141,7 +145,6 @@ Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
 					0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
 
 	glGenFramebuffers(1, &fbo.fboId);
-	glGenFramebuffers(1, &fbo.fboId);
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo.fboId);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo.texId, 0);
 	return fbo;
@@ -164,7 +167,9 @@ void init(Env& env, Program& prog)
 		Vec2f char_size= cast<Vec2f>(g_font.charSize);
 		Vec2f font_size= cast<Vec2f>(g_font.size);
 		font.charUvSize= char_size/font_size; 
+		font.whiteTexelUv= cast<Vec2f>(g_font.whitePixel)/font_size;
 
+		// Calculate uv-coordinates for characters
 		Vec2i cursor(0, g_font.size.y - g_font.charSize.y); // Lower-left origin
 		for (std::size_t i= 0; i < std::strlen(g_font.chars); ++i) {
 			unsigned char ch= g_font.chars[i];
@@ -177,14 +182,28 @@ void init(Env& env, Program& prog)
 			}
 		}
 
+		// Create vertically flipped RBGA texture from luminance data
+		// This yields an OpenGL texture with conventional origin
+		const Vec2i size= g_font.size;
+		unsigned char rgba_data[size.x*size.y*4];
+		for (int y= 0; y < size.y; ++y) {
+			for (int x= 0; x < size.x; ++x) {
+				int rgba_i= y*size.x*4 + x*4;
+				int data_i= (size.y - y - 1)*size.x + x;
+				rgba_data[rgba_i + 0]= 255;
+				rgba_data[rgba_i + 1]= 255;
+				rgba_data[rgba_i + 2]= 255;
+				rgba_data[rgba_i + 3]= g_font.data[data_i];
+			}
+		}
 		glGenTextures(1, &font.texId);
 		glBindTexture(GL_TEXTURE_2D, font.texId);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexImage2D(	GL_TEXTURE_2D, 0, GL_ALPHA8,
-						g_font.size.x, g_font.size.y,
-						0, GL_ALPHA, GL_UNSIGNED_BYTE,
-						g_font.data);
+		glTexImage2D(	GL_TEXTURE_2D, 0, GL_RGBA,
+						size.x, size.y,
+						0, GL_RGBA, GL_UNSIGNED_BYTE,
+						rgba_data);
 	}
 
 	{ // Gui shader
@@ -192,16 +211,20 @@ void init(Env& env, Program& prog)
 			"#version 120\n"
 			"varying vec2 v_uv;"
 			"void main() {"
-			"	v_uv= vec2(gl_MultiTexCoord0.x, 1.0 - gl_MultiTexCoord0.y);"
+			"	v_uv= gl_MultiTexCoord0.xy;"
 			"	gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0);"
 			"}\n";
 		const GLchar* fs_src=
 			"#version 120\n"
+			"uniform sampler2D u_tex;"
+			"uniform vec4 u_color;"
 			"varying vec2 v_uv;"
-			"void main() { gl_FragColor= vec4(1.0, 0.5, 0.5, 0.5); }\n";
+			"void main() { gl_FragColor= texture2D(u_tex, v_uv)*u_color; }\n";
 
 		Program::GuiShader& shd= prog.guiShader;
 		createGlShaderProgram(shd.prog, shd.vs, shd.fs, 1, &vs_src, 1, &fs_src);
+		shd.texLoc= glGetUniformLocation(shd.prog, "u_tex");
+		shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
 	}
 
 	{ // Program state
@@ -354,7 +377,6 @@ void frame(const Env& env, Program& prog)
 		// Draw to fbo
 		glBindFramebuffer(GL_FRAMEBUFFER, prog.fbo.fboId);
 		glViewport(0, 0, prog.fbo.reso.x, prog.fbo.reso.y);
-		glDisable(GL_TEXTURE_2D);
 
 		float s1= sin(rot.x), s2= sin(rot.y);
 		float c1= cos(rot.x), c2= cos(rot.y);
@@ -372,7 +394,6 @@ void frame(const Env& env, Program& prog)
 		glUniform1f(shd.phaseLoc, prog.phase);
 		glUniform3f(shd.colorLoc, prog.r, prog.g, prog.b);
 		glUniformMatrix4fv(shd.transformLoc, 1, GL_FALSE, transform);
-
 		glBegin(GL_QUADS);
 			glVertex3f(-1, -1, 1);
 			glVertex3f(1, -1, 1);
@@ -383,9 +404,10 @@ void frame(const Env& env, Program& prog)
 		// Draw scaled fbo texture
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
-		glEnable(GL_TEXTURE_2D);
 		glBindTexture(GL_TEXTURE_2D, prog.fbo.texId);
-		glUseProgram(0);
+		glUseProgram(prog.guiShader.prog);
+		glUniform1i(prog.guiShader.texLoc, 0);
+		glUniform4f(prog.guiShader.colorLoc, 1.0, 1.0, 1.0, 1.0);
 		glBegin(GL_QUADS);
 			glTexCoord2f(0, 0); glVertex2f(-1, -1);
 			glTexCoord2f(1, 0); glVertex2f(1, -1);
@@ -397,42 +419,43 @@ void frame(const Env& env, Program& prog)
 	{ // Draw gui
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
-
 		glUseProgram(prog.guiShader.prog);
-		glDisable(GL_TEXTURE_2D);
+		glBindTexture(GL_TEXTURE_2D, prog.font.texId);
+		glUniform1i(prog.guiShader.texLoc, 0);
+		glUniform4f(prog.guiShader.colorLoc, 0.1, 0.1, 0.1, 0.3);
 
+		const Vec2f white_uv= prog.font.whiteTexelUv;
+		// Background
 		glBegin(GL_QUADS);
-			// Background
-			glColor4f(0.1, 0.1, 0.1, 0.3);
+			glTexCoord2f(white_uv.x, white_uv.y);
 			glVertex2f(-1.0, 1.0);
 			glVertex2f(-1.0, 1.0 - slider_count*Slider::height());
 			glVertex2f(Slider::width() - 1.0, 1.0 - slider_count*Slider::height());
 			glVertex2f(Slider::width() - 1.0, 1.0);
-
-			// Sliders
-			for (std::size_t i= 0; i < slider_count; ++i) {
-				Slider& s= sliders[i];
-				float top= s.top(i);
-				float bottom= s.bottom(i);
-				float width= s.width()*s.fraction();
-
-				if (!slider_hover[i])
-					glColor4f(0.3, 0.3, 0.3, 0.6);
-				else
-					glColor4f(0.5, 0.5, 0.5, 0.8);
-
-				glVertex2f(-1.0, top);
-				glVertex2f(-1.0, bottom);
-				glVertex2f(-1.0 + width, bottom);
-				glVertex2f(-1.0 + width, top);
-			}
 		glEnd();
 
+		// Slider backgrounds
+		for (std::size_t i= 0; i < slider_count; ++i) {
+			Slider& s= sliders[i];
+			float top= s.top(i);
+			float bottom= s.bottom(i);
+			float width= s.width()*s.fraction();
+
+			if (!slider_hover[i])
+				glUniform4f(prog.guiShader.colorLoc, 0.3, 0.3, 0.3, 0.6);
+			else
+				glUniform4f(prog.guiShader.colorLoc, 0.5, 0.5, 0.5, 0.8);
+
+			glBegin(GL_QUADS);
+			glVertex2f(-1.0, top);
+			glVertex2f(-1.0, bottom);
+			glVertex2f(-1.0 + width, bottom);
+			glVertex2f(-1.0 + width, top);
+			glEnd();
+		}
+
 		// Slider texts
-		glEnable(GL_TEXTURE_2D);
-		glBindTexture(GL_TEXTURE_2D, prog.font.texId);
-		glBegin(GL_QUADS);
-		glColor4f(0.8, 0.8, 0.8, 1.0);
+		glUniform4f(prog.guiShader.colorLoc, 0.8, 0.8, 0.8, 1.0);
 		for (std::size_t s_i= 0; s_i < slider_count; ++s_i) {
 			Slider& s= sliders[s_i];
 			Vec2f pos= fitToGrid(Vec2f(-0.98, s.bottom(s_i)), env.winSize);
@@ -445,13 +468,15 @@ void frame(const Env& env, Program& prog)
 				Vec2f ch_ur= ch_pos + ch_size;
 				Vec2f ll= prog.font.uv[ch];
 				Vec2f ur= ll + prog.font.charUvSize;
+
+				glBegin(GL_QUADS);
 				glTexCoord2f(ll.x, ll.y); glVertex2f(ch_pos.x, ch_pos.y);
 				glTexCoord2f(ur.x, ll.y); glVertex2f(ch_ur.x,  ch_pos.y);
 				glTexCoord2f(ur.x, ur.y); glVertex2f(ch_ur.x,  ch_ur.y);
 				glTexCoord2f(ll.x, ur.y); glVertex2f(ch_pos.x, ch_ur.y);
+				glEnd();
 			}
 		}
-		glEnd();
 	}
 
 #ifndef NDEBUG
