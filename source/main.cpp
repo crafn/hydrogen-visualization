@@ -103,7 +103,7 @@ Program::VolumeShader createVolumeShader(int sample_count, int qn)
 		"		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps);"
 		"		intensity= max(0, intensity + (s.x - s.y*intensity)*dl);"
 		"	}"
-		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.02;"
+		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
 		"	gl_FragColor= vec4(color*intensity, 1.0);"
 		"}"
 		"\n";
