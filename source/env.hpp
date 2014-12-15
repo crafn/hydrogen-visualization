@@ -42,6 +42,7 @@ struct Env {
 	HDC hDC;
 	HWND hWnd;
 	HGLRC hGlrc;
+	DWORD ticks;
 	static bool closeEvent;
 #endif // OS == OS_WINDOWS
 };

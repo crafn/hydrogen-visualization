@@ -304,6 +304,9 @@ void drawRect(	Vec2f ll,					Vec2f tr,
 
 void frame(const Env& env, Program& prog)
 {
+	prog.time += env.dt;
+	prog.phase += env.dt;
+
 	struct Slider {
 		const char* title;
 		float min;
@@ -400,10 +403,6 @@ void frame(const Env& env, Program& prog)
 			prog.fbo= createFbo(volume_reso, volume_filtering);
 		}
 	}
-
-	/// @todo dt
-	prog.time += env.dt;
-	prog.phase += env.dt;
 
 	glClear(GL_COLOR_BUFFER_BIT);
 

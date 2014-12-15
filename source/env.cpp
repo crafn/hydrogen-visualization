@@ -20,6 +20,7 @@ Env envInit()
 	Env env;
 	env.cursorPos= Vec2f(0, 0);
 	env.lmbDown= false;
+	env.dt= 0.0;
 	env.winSize= reso;
 	env.quitRequested= false;
 
@@ -112,6 +113,9 @@ Env envInit()
 	SetPixelFormat(env.hDC, choose, &pfd);
 	env.hGlrc= wglCreateContext(env.hDC);
 	wglMakeCurrent(env.hDC, env.hGlrc);
+	
+	env.ticks= GetTickCount();
+
 #endif
 
 	return env;
@@ -202,6 +206,11 @@ void envUpdate(Env& env)
 	ScreenToClient(env.hWnd, &cursor);
 	env.cursorPos.x= 2.0*cursor.x/(rect.right - rect.left) - 1.0;
 	env.cursorPos.y= 1.0 - 2.0*cursor.y/(rect.bottom - rect.top);
+
+	DWORD old_ticks= env.ticks;
+	env.ticks= GetTickCount();
+	DWORD new_ticks= env.ticks;
+	env.dt= (new_ticks - old_ticks)/1000.0;
 
 #endif
 
