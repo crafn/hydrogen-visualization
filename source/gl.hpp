@@ -4,6 +4,8 @@
 #include <GL/gl.h>
 #include "env.hpp"
 
+#define BUFFER_OFFSET(i) ((char *)NULL + (i))
+
 // Required GL 2.1 features
 
 #define GL_FRAGMENT_SHADER 0x8B30
@@ -53,6 +55,20 @@ typedef void (*GlUniformMatrix4fv)(GLint, GLsizei, GLboolean, const GLfloat*);
 GlUniformMatrix4fv glUniformMatrix4fv;
 typedef void (*GlUniform1i)(GLint, GLint);
 GlUniform1i glUniform1i;
+typedef void (*GlGenBuffers)(GLsizei, GLuint*);
+GlGenBuffers glGenBuffers;
+typedef void (*GlBindBuffer)(GLenum, GLuint);
+GlBindBuffer glBindBuffer;
+typedef void (*GlBufferData)(GLenum, GLsizeiptr, const GLvoid*, GLenum);
+GlBufferData glBufferData;
+typedef void (*GlBufferSubData)(GLenum, GLintptr, GLsizeiptr, const GLvoid*);
+GlBufferSubData glBufferSubData;
+typedef void (*GlDeleteBuffers)(GLsizei, const GLuint*);
+GlDeleteBuffers glDeleteBuffers;
+typedef void (*GlEnableVertexAttribArray)(GLuint);
+GlEnableVertexAttribArray glEnableVertexAttribArray;
+typedef void (*GlVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const GLvoid*);
+GlVertexAttribPointer glVertexAttribPointer;
 
 // Required GL 3 features
 
@@ -93,6 +109,14 @@ void queryGlFuncs()
 	glUniform4f= (GlUniform4f)queryGlFunc("glUniform4f");
 	glUniformMatrix4fv= (GlUniformMatrix4fv)queryGlFunc("glUniformMatrix4fv");
 	glUniform1i= (GlUniform1i)queryGlFunc("glUniform1i");
+	glGenBuffers= (GlGenBuffers)queryGlFunc("glGenBuffers");
+	glBindBuffer= (GlBindBuffer)queryGlFunc("glBindBuffer");
+	glBufferData= (GlBufferData)queryGlFunc("glBufferData");
+	glBufferSubData= (GlBufferSubData)queryGlFunc("glBufferSubData");
+	glDeleteBuffers= (GlDeleteBuffers)queryGlFunc("glDeleteBuffers");
+	glEnableVertexAttribArray= (GlEnableVertexAttribArray)queryGlFunc("glEnableVertexAttribArray");
+	glVertexAttribPointer= (GlVertexAttribPointer)queryGlFunc("glVertexAttribPointer");
+
 	glGenFramebuffers= (GlGenFramebuffers)queryGlFunc("glGenFramebuffers");
 	glBindFramebuffer= (GlBindFramebuffer)queryGlFunc("glBindFramebuffer");
 	glFramebufferTexture2D= (GlFramebufferTexture2D)queryGlFunc("glFramebufferTexture2D");

@@ -12,9 +12,7 @@ namespace qm {
 
 struct Program {
 	struct VolumeShader {
-		GLuint vs;
-		GLuint fs;
-		GLuint prog;
+		GLuint vs, fs, prog;
 		GLint timeLoc;
 		GLint phaseLoc;
 		GLint colorLoc;
@@ -33,17 +31,19 @@ struct Program {
 		Vec2f whiteTexelUv;
 	};
 	struct GuiShader {
-		GLuint vs;
-		GLuint fs;
-		GLuint prog;
+		GLuint vs, fs, prog;
 		GLint texLoc;
 		GLint colorLoc;
+	};
+	struct QuadVbo {
+		GLuint vboId;
 	};
 
 	VolumeShader shader;
 	VolumeFbo fbo;
 	Font font;
 	GuiShader guiShader;
+	QuadVbo vbo;
 	float time;
 
 	// Slider settings
@@ -59,14 +59,16 @@ Program::VolumeShader createVolumeShader(int sample_count, int qn)
 {
 	const GLchar* vs_src=
 		"#version 120\n"
+		"attribute vec2 a_pos;"
+		"attribute vec2 a_uv;"
 		"uniform mat4 u_transform;"
 		"varying vec3 v_pos;"
 		"varying vec3 v_normal;"
 		"void main()"
 		"{"
-		"    gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0);"
-		"	v_pos= (u_transform*gl_Vertex).xyz;"
-		"	v_normal= mat3(u_transform)*vec3(gl_Vertex.xy, -1.0);"
+		"	gl_Position= vec4(a_pos, 0.0, 1.0);"
+		"	v_pos= (u_transform*vec4(a_pos, 0.0, 1.0)).xyz;"
+		"	v_normal= mat3(u_transform)*vec3(a_pos, -1.0);"
 		"}"
 		"\n";
 	const GLchar* fs_template_src=
@@ -209,10 +211,12 @@ void init(Env& env, Program& prog)
 	{ // Gui shader
 		const GLchar* vs_src=
 			"#version 120\n"
+			"attribute vec2 a_pos;"
+			"attribute vec2 a_uv;"
 			"varying vec2 v_uv;"
 			"void main() {"
-			"	v_uv= gl_MultiTexCoord0.xy;"
-			"	gl_Position= vec4(gl_Vertex.xy, 0.0, 1.0);"
+			"	v_uv= a_uv;"
+			"	gl_Position= vec4(a_pos, 0.0, 1.0);"
 			"}\n";
 		const GLchar* fs_src=
 			"#version 120\n"
@@ -225,6 +229,19 @@ void init(Env& env, Program& prog)
 		createGlShaderProgram(shd.prog, shd.vs, shd.fs, 1, &vs_src, 1, &fs_src);
 		shd.texLoc= glGetUniformLocation(shd.prog, "u_tex");
 		shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
+	}
+
+	{ // Vbo used at rendering quads
+		Program::QuadVbo& vbo= prog.vbo;
+		glGenBuffers(1, &vbo.vboId);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo.vboId);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(Vec2f)*(4 + 4), NULL, GL_DYNAMIC_DRAW);
+		glEnableVertexAttribArray(0); // Position
+		glVertexAttribPointer(	0, 2, GL_FLOAT, GL_FALSE,
+								sizeof(Vec2f)*2, BUFFER_OFFSET(0));
+		glEnableVertexAttribArray(1); // Uv
+		glVertexAttribPointer(	1, 2, GL_FLOAT, GL_FALSE,
+								sizeof(Vec2f)*2, BUFFER_OFFSET(sizeof(Vec2f)));
 	}
 
 	{ // Program state
@@ -246,6 +263,7 @@ void init(Env& env, Program& prog)
 		glClearColor(0.0, 0.0, 0.0, 0.0);
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glBindBuffer(GL_ARRAY_BUFFER, prog.vbo.vboId);
 	}
 }
 
@@ -259,12 +277,29 @@ void quit(Env& env, Program& prog)
 							prog.guiShader.vs,
 							prog.guiShader.fs);
 
+	{ // Vbo
+		glDeleteBuffers(1, &prog.vbo.vboId);
+	}
+
 	{ // Font
-		Program::Font& font= prog.font;
-		glDeleteTextures(1, &font.texId);
+		glDeleteTextures(1, &prog.font.texId);
 	}
 
 	envQuit(env);
+}
+
+/// @note Uses currently bound vbo
+void drawRect(	Vec2f ll,					Vec2f tr,
+				Vec2f uv_ll= Vec2f(0, 0),	Vec2f uv_tr= Vec2f(1, 1))
+{
+	Vec2f v[4 + 4]= {
+		ll, uv_ll,
+		Vec2f(tr.x, ll.y), Vec2f(uv_tr.x, uv_ll.y),
+		Vec2f(ll.x, tr.y), Vec2f(uv_ll.x, uv_tr.y),
+		tr, uv_tr
+	};
+	glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(v), v);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 }
 
 void frame(const Env& env, Program& prog)
@@ -382,10 +417,10 @@ void frame(const Env& env, Program& prog)
 		float c1= cos(rot.x), c2= cos(rot.y);
 		// Turntable-style rotation
 		float transform[16]= {
-			c1,			0,		s1,	0,
+			c1,			0,		s1,		0,
 			-s1*s2,		c2,		c1*s2,	0,
 			-c2*s1,		-s2,	c2*c1,	0,
-			0,			0,		0,		1
+			-c2*s1,		-s2,	c2*c1,	1 // Translation around origin
 		};
 
 		Program::VolumeShader& shd= prog.shader;
@@ -394,12 +429,7 @@ void frame(const Env& env, Program& prog)
 		glUniform1f(shd.phaseLoc, prog.phase);
 		glUniform3f(shd.colorLoc, prog.r, prog.g, prog.b);
 		glUniformMatrix4fv(shd.transformLoc, 1, GL_FALSE, transform);
-		glBegin(GL_QUADS);
-			glVertex3f(-1, -1, 1);
-			glVertex3f(1, -1, 1);
-			glVertex3f(1,  1, 1);
-			glVertex3f(-1, 1, 1);
-		glEnd();
+		drawRect(Vec2f(-1, -1), Vec2f(1, 1));
 
 		// Draw scaled fbo texture
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -408,15 +438,11 @@ void frame(const Env& env, Program& prog)
 		glUseProgram(prog.guiShader.prog);
 		glUniform1i(prog.guiShader.texLoc, 0);
 		glUniform4f(prog.guiShader.colorLoc, 1.0, 1.0, 1.0, 1.0);
-		glBegin(GL_QUADS);
-			glTexCoord2f(0, 0); glVertex2f(-1, -1);
-			glTexCoord2f(1, 0); glVertex2f(1, -1);
-			glTexCoord2f(1, 1); glVertex2f(1, 1);
-			glTexCoord2f(0, 1); glVertex2f(-1, 1);
-		glEnd();
+		drawRect(Vec2f(-1, -1), Vec2f(1, 1));
 	}
 
 	{ // Draw gui
+		const Vec2f white_uv= prog.font.whiteTexelUv;
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
 		glUseProgram(prog.guiShader.prog);
@@ -424,15 +450,10 @@ void frame(const Env& env, Program& prog)
 		glUniform1i(prog.guiShader.texLoc, 0);
 		glUniform4f(prog.guiShader.colorLoc, 0.1, 0.1, 0.1, 0.3);
 
-		const Vec2f white_uv= prog.font.whiteTexelUv;
 		// Background
-		glBegin(GL_QUADS);
-			glTexCoord2f(white_uv.x, white_uv.y);
-			glVertex2f(-1.0, 1.0);
-			glVertex2f(-1.0, 1.0 - slider_count*Slider::height());
-			glVertex2f(Slider::width() - 1.0, 1.0 - slider_count*Slider::height());
-			glVertex2f(Slider::width() - 1.0, 1.0);
-		glEnd();
+		drawRect(	Vec2f(-1.0, 1.0 - slider_count*Slider::height()),
+					Vec2f(Slider::width() - 1.0, 1.0),
+					white_uv, white_uv);
 
 		// Slider backgrounds
 		for (std::size_t i= 0; i < slider_count; ++i) {
@@ -446,12 +467,8 @@ void frame(const Env& env, Program& prog)
 			else
 				glUniform4f(prog.guiShader.colorLoc, 0.5, 0.5, 0.5, 0.8);
 
-			glBegin(GL_QUADS);
-			glVertex2f(-1.0, top);
-			glVertex2f(-1.0, bottom);
-			glVertex2f(-1.0 + width, bottom);
-			glVertex2f(-1.0 + width, top);
-			glEnd();
+			drawRect(	Vec2f(-1.0, bottom), Vec2f(-1.0 + width, top),
+						white_uv, white_uv);
 		}
 
 		// Slider texts
@@ -465,16 +482,10 @@ void frame(const Env& env, Program& prog)
 				Vec2f ch_size= cast<Vec2f>(g_font.charSize)/cast<Vec2f>(env.winSize)*2.0;
 				Vec2f ch_pos(pos.x + ch_size.x*c_i, pos.y);
 
-				Vec2f ch_ur= ch_pos + ch_size;
+				Vec2f ch_tr= ch_pos + ch_size;
 				Vec2f ll= prog.font.uv[ch];
-				Vec2f ur= ll + prog.font.charUvSize;
-
-				glBegin(GL_QUADS);
-				glTexCoord2f(ll.x, ll.y); glVertex2f(ch_pos.x, ch_pos.y);
-				glTexCoord2f(ur.x, ll.y); glVertex2f(ch_ur.x,  ch_pos.y);
-				glTexCoord2f(ur.x, ur.y); glVertex2f(ch_ur.x,  ch_ur.y);
-				glTexCoord2f(ll.x, ur.y); glVertex2f(ch_pos.x, ch_ur.y);
-				glEnd();
+				Vec2f tr= ll + prog.font.charUvSize;
+				drawRect(ch_pos, ch_tr, ll, tr);
 			}
 		}
 	}
