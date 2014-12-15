@@ -55,6 +55,8 @@ Env envInit()
 	env.ctx= glXCreateContext(env.dpy, vi, NULL, GL_TRUE);
 	glXMakeCurrent(env.dpy, env.win, env.ctx);
 
+	clock_gettime(CLOCK_MONOTONIC, &env.ts);
+
 #elif OS == OS_WINDOWS
 	struct WndProc {
 		static LRESULT CALLBACK call(
@@ -170,6 +172,11 @@ void envUpdate(Env& env)
 
 	env.cursorPos.x= 2.0*cursor_x/gwa.width - 1.0;
 	env.cursorPos.y= 1.0 - 2.0*cursor_y/gwa.height;
+
+	long old_us= env.ts.tv_nsec/1000 + env.ts.tv_sec*1000000;
+	clock_gettime(CLOCK_MONOTONIC, &env.ts);
+	long new_us= env.ts.tv_nsec/1000 + env.ts.tv_sec*1000000;
+	env.dt= (new_us - old_us)/1000000.0;
 
 #elif OS == OS_WINDOWS
 	Sleep(1);

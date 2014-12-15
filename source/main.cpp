@@ -402,8 +402,8 @@ void frame(const Env& env, Program& prog)
 	}
 
 	/// @todo dt
-	prog.time += 1.0/30.0;
-	prog.phase += 1.0/30.0;
+	prog.time += env.dt;
+	prog.phase += env.dt;
 
 	glClear(GL_COLOR_BUFFER_BIT);
 

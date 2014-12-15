@@ -13,6 +13,7 @@
 
 #if OS == OS_LINUX
 #	include <GL/glx.h>
+#	include <time.h>
 #	include <X11/X.h>
 #	include <X11/Xlib.h>
 #elif OS == OS_WINDOWS
@@ -28,6 +29,7 @@ struct Env {
 	Vec2f anchorPos; // Mouse dragging start position
 	Vec2f cursorDelta;
 	bool lmbDown;
+	float dt;
 	Vec2i winSize; // Window content size in pixels
 	bool quitRequested;
 
@@ -35,6 +37,7 @@ struct Env {
 	Display*	dpy;
 	Window		win;
 	GLXContext	ctx;
+	timespec ts;
 #elif OS == OS_WINDOWS
 	HDC hDC;
 	HWND hWnd;
