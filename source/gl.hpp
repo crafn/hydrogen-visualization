@@ -8,12 +8,16 @@
 
 // Required GL 2.1 features
 
+#define GL_ARRAY_BUFFER 0x8892
+#define GL_DYNAMIC_DRAW 0x88E8
 #define GL_FRAGMENT_SHADER 0x8B30
 #define GL_VERTEX_SHADER 0x8B31
 #define GL_COMPILE_STATUS 0x8B81
 #define GL_LINK_STATUS 0x8B82
 
 typedef char GLchar;
+typedef intptr_t GLsizeiptr;
+typedef ptrdiff_t GLintptr;
 
 typedef GLuint (*GlCreateShader)(GLenum);
 GlCreateShader glCreateShader;
@@ -72,8 +76,8 @@ GlVertexAttribPointer glVertexAttribPointer;
 
 // Required GL 3 features
 
-#define GL_FRAMEBUFFER                    0x8D40
-#define GL_COLOR_ATTACHMENT0              0x8CE0
+#define GL_FRAMEBUFFER 0x8D40
+#define GL_COLOR_ATTACHMENT0 0x8CE0
 
 typedef void (*GlGenFramebuffers)(GLsizei, GLuint*);
 GlGenFramebuffers glGenFramebuffers;
