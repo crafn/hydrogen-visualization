@@ -1,5 +1,6 @@
 // See unity.cpp for build instructions
 
+#include <cassert>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,11 +53,93 @@ struct Program {
 	float resoMul;
 	float filtering;
 	float r, g, b;
-	float quantumN;
+	float n, l, m;
 };
 
-Program::VolumeShader createVolumeShader(int sample_count, int qn)
+Program::VolumeShader createVolumeShader(int sample_count, int n, int l, int)
 {
+	float bohr_radius= 0.01; // Sets scale
+	const int poly_term_count= 20;
+	// Formula for hydrogen wave function with parameters r, theta, and phi
+	const std::size_t hydrogen_str_size= 1024;
+	char hydrogen_str[hydrogen_str_size]= "";
+	{
+		// Form a hydrogen wave function |nlm> in four parts
+		// psi_nlm(r, theta, phi) = C*E*L*Y, where
+		//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
+		//   E = e^(-rho/l)*rho^l
+		//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
+		//   Y = Spherical harmonic function Y(l, m, theta, phi)
+		//   rho = 2r/(n*a_0)
+		const std::size_t rho_str_size= 16;
+		char rho_str[rho_str_size];
+		std::snprintf(rho_str, rho_str_size, "%f*r", 2.0/bohr_radius/n);
+
+		// C
+		float part_C=
+			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
+						fact(n - l - 1)/(2*n*fact(n + l)));
+
+		// E
+		const std::size_t part_E_size= 32 + rho_str_size*2;
+		char part_E_str[part_E_size]= "";
+		std::snprintf(part_E_str, part_E_size, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+
+		// L
+		const std::size_t part_L_size= poly_term_count*(32 + rho_str_size);
+		char part_L_str[part_L_size]= "";
+		{
+			float laguerre_coeff[poly_term_count]= {};
+			int ch_i= 0;
+			assert(n - l < poly_term_count);
+
+			laguerre(laguerre_coeff, n - l - 1, 2*l + 1);
+			for (int i= 0; i < poly_term_count; ++i) {
+				if (laguerre_coeff[i] == 0.0)
+					continue;
+
+				std::size_t size= part_L_size - ch_i;
+				assert(ch_i + size <= part_L_size);
+
+				char prepend_ch= ch_i == 0 ? ' ' : '+';
+				ch_i += std::snprintf(
+							part_L_str + ch_i, size,
+							"%c%f*pow(%s, %i.0)", prepend_ch, laguerre_coeff[i], rho_str, i);
+			}
+		}
+
+		// Y
+		/// @todo
+		const std::size_t part_Y_size= poly_term_count*16 + 16;
+		char part_Y_str[part_Y_size]= "1";
+/*		{
+			float spherical_coeff[poly_term_count]= {};
+			int ch_i= 0;
+			assert(l - 1 < poly_term_count);
+			sphericalHarmonics(spherical_coeff, l, m);
+			for (int i= 0; i < poly_term_count; ++i) {
+				if (spherical_coeff[i] == 0.0)
+					continue;
+
+			}
+		}*/
+
+		// Form the wave function
+		std::snprintf(	hydrogen_str, hydrogen_str_size,
+						"%f*(%s)*(%s)*(%s)",
+						part_C, part_E_str, part_L_str, part_Y_str);
+
+		std::printf("rho: %s\n", rho_str);
+		std::printf("C: %f\n", part_C);
+		std::printf("E: %s\n", part_E_str);
+		std::printf("L: %s\n", part_L_str);
+		for (int i= 0; i < poly_term_count; ++i) {
+			//std::printf("x^%i: %f\n", i, laguerre_coeff[i]);
+		}
+
+		std::printf("wave function:\n%s\n", hydrogen_str);
+	}
+
 	const GLchar* vs_src=
 		"#version 120\n"
 		"attribute vec2 a_pos;"
@@ -80,28 +163,23 @@ Program::VolumeShader createVolumeShader(int sample_count, int qn)
 		"float rand(vec2 co){"
 		"    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453);"
 		"}"
-		"vec2 sample(vec3 p)" // x emission, y absorption
+		"vec2 sample(vec3 sphe_p)" // x emission, y absorption
 		"{"
-		"	p.z += 0.2;"
-		"	float beam_e="
-		"		abs(cos(p.z*10.0 - sign(p.z)*u_phase*10.0)*0.5*QN + 1.0)*"
-		"			0.001/(p.x*p.x + p.y*p.y + 0.001);"
-		"	float disc_e="
-		"		0.01/((p.z*p.z + 0.01)*(p.x*p.x + p.y*p.y)*100.0 + 0.1);"
-		"	float hole_a= pow(min(1.0, 0.1/(dot(p, p))), 10.0);"
-		"	float a= clamp(hole_a, 0.0, 1.0);"
-		"    return vec2((disc_e + beam_e)*(1 - a), a + disc_e*7.0)*25.0;"
+		"  float value= WAVEFUNC(sphe_p.x, sphe_p.y, sphe_p.z);"
+		"  return vec2(value*value, 0.0);"
 		"}"
 		"void main()"
 		"{"
 		"	vec3 n= normalize(v_normal);"
 		"	vec3 color= u_color;"
 		"	float intensity= 0.0;"
-		"	const int steps= SAMPLE_COUNT;"
-		"	const float dl= 2.0/steps;"
-		"	for (int i= 0; i < steps; ++i) {"
-		"		vec2 s= sample(v_pos + n*2.0*float(steps - i - 1)/steps);"
-		"		intensity= max(0, intensity + (s.x - s.y*intensity)*dl);"
+		"	const float dl= 2.0/SAMPLE_COUNT;"
+		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
+		"		vec3 cart_p= v_pos + n*2.0*float(SAMPLE_COUNT - i - 1)/SAMPLE_COUNT;"
+		"		float dist= sqrt(dot(cart_p, cart_p)); /* @todo don't calculate */"
+		"		vec3 sphe_p= vec3(dist, acos(cart_p.z/dist), atan(cart_p.y, cart_p.x));"
+		"		vec2 s= sample(sphe_p);"
+		"		intensity= max(0, intensity + (s.x - s.y*intensity)*dl/2.0);"
 		"	}"
 		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
 		"	gl_FragColor= vec4(color*intensity, 1.0);"
@@ -114,9 +192,9 @@ Program::VolumeShader createVolumeShader(int sample_count, int qn)
 		buf_size,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
-		"#define QN %i\n",
+		"#define WAVEFUNC(r, theta, phi) (%s)\n",
 		sample_count,
-		qn);
+		hydrogen_str);
 	const GLchar* fs_src[]= { buf, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
@@ -253,9 +331,11 @@ void init(Env& env, Program& prog)
 		prog.r= 0.4;
 		prog.g= 0.8;
 		prog.b= 1.0;
-		prog.quantumN= 1;
+		prog.n= 1;
+		prog.l= 0;
+		prog.m= 0;
 
-		prog.shader= createVolumeShader(prog.sampleCount, prog.quantumN);
+		prog.shader= createVolumeShader(prog.sampleCount, prog.n, prog.l, prog.m);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -344,7 +424,9 @@ void frame(const Env& env, Program& prog)
 		{ "R",			0.0,	2.0,	prog.r,				3, false },
 		{ "G",			0.0,	2.0,	prog.g,				3, false },
 		{ "B",			0.0,	2.0,	prog.b,				3, false },
-		{ "Quantum n",	1,		50,		prog.quantumN,		0, true },
+		{ "n",			1,		20,		prog.n,				0, true },
+		{ "l",			0,		20,		prog.l,				0, true },
+		{ "m",			0,		20,		prog.m,				0, true },
 	};
 	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
 	bool slider_hover[slider_count]= {};
@@ -371,7 +453,7 @@ void frame(const Env& env, Program& prog)
 											prog.shader.vs,
 											prog.shader.fs);
 					prog.shader=
-						createVolumeShader(prog.sampleCount, prog.quantumN);
+						createVolumeShader(prog.sampleCount, prog.n, prog.l, prog.m);
 				}
 			} else {
 				slider_hover[i]= false;
@@ -406,7 +488,6 @@ void frame(const Env& env, Program& prog)
 
 	glClear(GL_COLOR_BUFFER_BIT);
 
-	/// @todo Fixed pipeline starts to feel a bit clumsy
 	{ // Draw volume	
 		// Draw to fbo
 		glBindFramebuffer(GL_FRAMEBUFFER, prog.fbo.fboId);
