@@ -202,11 +202,11 @@ void testMath()
 		}
 
 		{
-			double sphe[9];
+			double sphe[10];
 			double mul= 1.0/128*std::sqrt(40755.0/pi);
-			double sphe_correct[9]= { 0, -3*mul, 0, 17*mul, 0, 0, 0, 0, 0};
+			double sphe_correct[10]= { 0, -3*mul, 0, 17*mul, 0, 0, 0, 0, 0, 0};
 			sphericalHarmonics(sphe, 9, 6);
-			for (int i= 0; i < 9; ++i) {
+			for (int i= 0; i < 10; ++i) {
 				assert(std::abs(sphe[i] - sphe_correct[i]) < 0.0001);
 			}
 		}
