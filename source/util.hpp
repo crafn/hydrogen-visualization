@@ -7,8 +7,9 @@
 
 namespace qm {
 
-const float radToDeg= 57.2957795f;
-const float tau= 6.28318530f;
+const double radToDeg= 57.2957795;
+const double tau= 6.28318530;
+const double pi= tau/2.0;
 
 template <typename T>
 struct Vec2 {
@@ -56,13 +57,14 @@ struct StackString {
 	char str[Size];
 	int length;
 
-	StackString(): str(""), length(0) {}
-	int append(const char *format, ...)
+	StackString(): length(0)
+	{ str[0]= 0; }
+	void append(const char *format, ...)
 	{
 		va_list args;
 		va_start(args, format);
 
-		std::size_t added= std::vsnprintf(str, Size - length, format, args);
+		std::size_t added= std::vsnprintf(str + length, Size - length, format, args);
 		assert(added >= 0);
 
 		va_end(args);
@@ -72,38 +74,39 @@ struct StackString {
 	}
 };
 
-inline
-float clamp(float v, float min, float max)
+template <typename T>
+T clamp(T v, T min, T max)
 { return v < min ? min : v > max ? max : v; }
 
-inline
-float round(float v, int decimals= 0)
+template <typename T>
+T round(T v, int decimals= 0)
 {
 	double mul= std::pow(10, decimals);
 	return std::floor(v*mul + 0.5)/mul;
 }
 
 inline
-long fact(long n)
+double fact(double n)
 { return n > 0 ? n*fact(n - 1) : 1; }
 
-template <typename T>
-T binomial(T n, int r)
+double binomial(double n, int r)
 {
-	T result= 1;
+	double result= 1;
 	for (int i= 1; i <= r; ++i)
-		result *= (n + T(1) - i)/i;
+		result *= n + 1 - i;
+	for (int i= 1; i <= r; ++i)
+		result /= i;
 	return result;
 }
 
 /// Generalized Laguerre Polynomials
 /// @param coeff should be size of n + 1, as coeff[n] will contain nth power
 inline
-void laguerre(float* coeff, int n, int alpha)
+void laguerre(double* coeff, int n, int alpha)
 {
 	int sign= 1;
 	for (int i= 0; i <= n; ++i) {
-		coeff[i]= sign*binomial(n + alpha, n - i)/fact(i);
+		coeff[i]= 1.0*sign*binomial(n + alpha, n - i)/fact(i);
 		sign *= -1;
 	}
 }
@@ -111,15 +114,15 @@ void laguerre(float* coeff, int n, int alpha)
 /// Legendre polynomials
 /// @param coeff should be size of n + 1, as coeff[n] will contain nth power
 inline
-void legendre(float* coeff, int n)
+void legendre(double* coeff, int n)
 {
-	float mul= std::pow(2, n);
+	double mul= std::pow(2, n);
 	for (int i= 0; i <= n; ++i)
 		coeff[i]= mul*binomial(n, i)*binomial((i + n - 1)/2.0, n);
 }
 
 inline
-void differentiate(float* coeff, int coeff_size, int diff_count)
+void differentiate(double* coeff, int coeff_size, int diff_count)
 {
 	for (int i= 0; i < coeff_size; ++i) {
 		if (diff_count > i)
@@ -131,7 +134,7 @@ void differentiate(float* coeff, int coeff_size, int diff_count)
 /// Coefficients for cosines in spherical harmonics
 /// @param cos_coeff should be size of l + 1
 inline
-void sphericalHarmonics(float* cos_coeff, int l, int m)
+void sphericalHarmonics(double* cos_coeff, int l, int m)
 {
 	// Calculate coefficients for associated legendre polynomials
 	// P_lm(cos(theta)) = (-1)^m * sin(theta)^m * D^m P_l(cos(theta))
@@ -146,9 +149,19 @@ void sphericalHarmonics(float* cos_coeff, int l, int m)
 inline
 void testMath()
 {
+	assert(fact(0) == 1);
+	assert(fact(1) == 1);
+	assert(fact(4) == 24);
+
 	assert(binomial(10, 4) == 210);
 	assert(binomial(1, 77) == 0);
-	/// @todo Rest
+
+	double lag[4]= {};
+	double lag_correct[4]= {10, -10, 2.5, -1.0/6};
+	laguerre(lag, 3, 2);
+	for (int i= 0; i < 4; ++i)
+		assert(std::abs(lag[i] - lag_correct[i]) < 0.0001);
+
 }
 
 } // qm

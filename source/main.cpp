@@ -53,16 +53,24 @@ struct Program {
 	float resoMul;
 	float filtering;
 	float r, g, b;
+	float scale;
 	float n, l, m;
 };
 
-Program::VolumeShader createVolumeShader(int sample_count, int n, int l, int)
+Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, int l, int m)
 {
-	float bohr_radius= 0.01; // Sets scale
-	const int poly_term_count= 20;
+	/// @todo Remove
+	testMath();
+
+	if (l > n - 1)
+		l= n - 1;
+	if (m > l)
+		m= l;
+
+	double bohr_radius= std::exp(scale*0.5) - 0.99999;
+	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
-	const std::size_t hydrogen_str_size= 1024;
-	char hydrogen_str[hydrogen_str_size]= "";
+	StackString<1024> hydrogen_str;
 	{
 		// Form a hydrogen wave function |nlm> in four parts
 		// psi_nlm(r, theta, phi) = C*E*L*Y, where
@@ -73,24 +81,21 @@ Program::VolumeShader createVolumeShader(int sample_count, int n, int l, int)
 		//   rho = 2r/(n*a_0)
 		const std::size_t rho_str_size= 16;
 		char rho_str[rho_str_size];
-		std::snprintf(rho_str, rho_str_size, "%f*r", 2.0/bohr_radius/n);
+		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
 
 		// C
-		float part_C=
+		hydrogen_str.append("%e",
 			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
-						fact(n - l - 1)/(2*n*fact(n + l)));
+						fact(n - l - 1)/(2*n*fact(n + l))));
+		hydrogen_str.append("*");
 
 		// E
-		const std::size_t part_E_size= 32 + rho_str_size*2;
-		char part_E_str[part_E_size]= "";
-		std::snprintf(part_E_str, part_E_size, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+		hydrogen_str.append("exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+		hydrogen_str.append("*");
 
-		// L
-		const std::size_t part_L_size= poly_term_count*(32 + rho_str_size);
-		char part_L_str[part_L_size]= "";
-		{
-			float laguerre_coeff[poly_term_count]= {};
-			int ch_i= 0;
+		{ // L
+			hydrogen_str.append("(");
+			double laguerre_coeff[poly_term_count]= {};
 			assert(n - l < poly_term_count);
 
 			laguerre(laguerre_coeff, n - l - 1, 2*l + 1);
@@ -98,46 +103,32 @@ Program::VolumeShader createVolumeShader(int sample_count, int n, int l, int)
 				if (laguerre_coeff[i] == 0.0)
 					continue;
 
-				std::size_t size= part_L_size - ch_i;
-				assert(ch_i + size <= part_L_size);
-
-				char prepend_ch= ch_i == 0 ? ' ' : '+';
-				ch_i += std::snprintf(
-							part_L_str + ch_i, size,
-							"%c%f*pow(%s, %i.0)", prepend_ch, laguerre_coeff[i], rho_str, i);
+				hydrogen_str.append("+%e*pow(%s, %i.0)", laguerre_coeff[i], rho_str, i);
 			}
+			hydrogen_str.append(")");
 		}
+		hydrogen_str.append("*");
 
-		// Y
-		/// @todo
-		const std::size_t part_Y_size= poly_term_count*16 + 16;
-		char part_Y_str[part_Y_size]= "1";
-/*		{
-			float spherical_coeff[poly_term_count]= {};
-			int ch_i= 0;
+		{ // Y
+			// Dropping (-1)^m
+			double normalization= 
+				std::sqrt( (2*l + 1.0)/(4*pi)*fact(l - m)/fact(l + m) );
+			hydrogen_str.append(
+				"%e*pow(sin_theta, %i.0)*(",
+				normalization,
+				m); // Dropping e^(imphi)
+			double spherical_coeff[poly_term_count]= {};
 			assert(l - 1 < poly_term_count);
 			sphericalHarmonics(spherical_coeff, l, m);
 			for (int i= 0; i < poly_term_count; ++i) {
 				if (spherical_coeff[i] == 0.0)
 					continue;
-
+				hydrogen_str.append("+%e*pow(cos_theta, %i)", spherical_coeff[i], i);
 			}
-		}*/
-
-		// Form the wave function
-		std::snprintf(	hydrogen_str, hydrogen_str_size,
-						"%f*(%s)*(%s)*(%s)",
-						part_C, part_E_str, part_L_str, part_Y_str);
-
-		std::printf("rho: %s\n", rho_str);
-		std::printf("C: %f\n", part_C);
-		std::printf("E: %s\n", part_E_str);
-		std::printf("L: %s\n", part_L_str);
-		for (int i= 0; i < poly_term_count; ++i) {
-			//std::printf("x^%i: %f\n", i, laguerre_coeff[i]);
+			hydrogen_str.append(")");
 		}
 
-		std::printf("wave function:\n%s\n", hydrogen_str);
+		std::printf("Wave function:\n%s\n", hydrogen_str.str);
 	}
 
 	const GLchar* vs_src=
@@ -165,7 +156,9 @@ Program::VolumeShader createVolumeShader(int sample_count, int n, int l, int)
 		"}"
 		"vec2 sample(vec3 sphe_p)" // x emission, y absorption
 		"{"
-		"  float value= WAVEFUNC(sphe_p.x, sphe_p.y, sphe_p.z);"
+		"  float cos_theta= cos(sphe_p.y); /* @todo don't calculate */"
+		"  float sin_theta= sin(sphe_p.y); /* @todo don't calculate */"
+		"  float value= WAVEFUNC(sphe_p.x, sphe_p.y, sphe_p.z, cos_theta, sin_theta);"
 		"  return vec2(value*value, 0.0);"
 		"}"
 		"void main()"
@@ -186,15 +179,15 @@ Program::VolumeShader createVolumeShader(int sample_count, int n, int l, int)
 		"}"
 		"\n";
 
-	const std::size_t buf_size= 512;
+	const std::size_t buf_size= 2048;
 	char buf[buf_size];
 	std::snprintf(buf,
 		buf_size,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
-		"#define WAVEFUNC(r, theta, phi) (%s)\n",
+		"#define WAVEFUNC(r, theta, phi, cos_theta, sin_theta) (%s)\n",
 		sample_count,
-		hydrogen_str);
+		hydrogen_str.str);
 	const GLchar* fs_src[]= { buf, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
@@ -331,11 +324,12 @@ void init(Env& env, Program& prog)
 		prog.r= 0.4;
 		prog.g= 0.8;
 		prog.b= 1.0;
+		prog.scale= 0.5;
 		prog.n= 1;
 		prog.l= 0;
 		prog.m= 0;
 
-		prog.shader= createVolumeShader(prog.sampleCount, prog.n, prog.l, prog.m);
+		prog.shader= createVolumeShader(prog.sampleCount, prog.scale, prog.n, prog.l, prog.m);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -389,8 +383,8 @@ void frame(const Env& env, Program& prog)
 
 	struct Slider {
 		const char* title;
-		float min;
-		float max;
+		const float& min;
+		const float& max;
 		float& value;
 		int decimals;
 		bool recompile;
@@ -411,7 +405,7 @@ void frame(const Env& env, Program& prog)
 		}
 		float coordToValue(float x) const
 		{
-			float v= clamp((1.0 + x)/width()*(max - min) + min, min, max);
+			float v= clamp<float>((1.0 + x)/width()*(max - min) + min, min, max);
 			return round(v, decimals);
 		}
 	};
@@ -424,6 +418,7 @@ void frame(const Env& env, Program& prog)
 		{ "R",			0.0,	2.0,	prog.r,				3, false },
 		{ "G",			0.0,	2.0,	prog.g,				3, false },
 		{ "B",			0.0,	2.0,	prog.b,				3, false },
+		{ "scale",		0.001,	1.0,	prog.scale,			3, true },
 		{ "n",			1,		20,		prog.n,				0, true },
 		{ "l",			0,		20,		prog.l,				0, true },
 		{ "m",			0,		20,		prog.m,				0, true },
@@ -453,7 +448,7 @@ void frame(const Env& env, Program& prog)
 											prog.shader.vs,
 											prog.shader.fs);
 					prog.shader=
-						createVolumeShader(prog.sampleCount, prog.n, prog.l, prog.m);
+						createVolumeShader(prog.sampleCount, prog.scale, prog.n, prog.l, prog.m);
 				}
 			} else {
 				slider_hover[i]= false;
@@ -465,7 +460,7 @@ void frame(const Env& env, Program& prog)
 			prev_delta= smooth_delta;
 			
 			rot += smooth_delta*2;
-			rot.y= clamp(rot.y, -tau/4, tau/4);
+			rot.y= clamp<float>(rot.y, -tau/4, tau/4);
 		}
 	}
 
