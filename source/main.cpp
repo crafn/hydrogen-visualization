@@ -67,7 +67,7 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 	if (m > l)
 		m= l;
 
-	double bohr_radius= std::exp(scale*0.5) - 0.99999;
+	double bohr_radius= std::exp(scale*0.25) - 0.99999;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
 	StackString<1024> hydrogen_str;
@@ -110,7 +110,6 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		hydrogen_str.append("*");
 
 		{ // Y
-			// Dropping (-1)^m
 			hydrogen_str.append(
 				"pow(sin_theta, %i.0)*(",
 				m); // Dropping e^(imphi)
@@ -153,10 +152,10 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		"}"
 		"vec2 sample(vec3 sphe_p)" // x emission, y absorption
 		"{"
-		"  float cos_theta= cos(sphe_p.y); /* @todo don't calculate */"
-		"  float sin_theta= sin(sphe_p.y); /* @todo don't calculate */"
-		"  float value= WAVEFUNC(sphe_p.x, sphe_p.y, sphe_p.z, cos_theta, sin_theta);"
-		"  return vec2(value*value, 0.0);"
+		"	float cos_theta= cos(sphe_p.y); /* @todo don't calculate */"
+		"	float sin_theta= sin(sphe_p.y); /* @todo don't calculate */"
+		"	float value= WAVEFUNC(sphe_p.x, sphe_p.y, sphe_p.z, cos_theta, sin_theta);"
+		"	return vec2(value*value*2.34567890, 0.0);"
 		"}"
 		"void main()"
 		"{"
