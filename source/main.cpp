@@ -111,11 +111,8 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 
 		{ // Y
 			// Dropping (-1)^m
-			double normalization= 
-				std::sqrt( (2*l + 1.0)/(4*pi)*fact(l - m)/fact(l + m) );
 			hydrogen_str.append(
-				"%e*pow(sin_theta, %i.0)*(",
-				normalization,
+				"pow(sin_theta, %i.0)*(",
 				m); // Dropping e^(imphi)
 			double spherical_coeff[poly_term_count]= {};
 			assert(l - 1 < poly_term_count);

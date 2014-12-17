@@ -125,9 +125,10 @@ inline
 void differentiate(double* coeff, int coeff_size, int diff_count)
 {
 	for (int i= 0; i < coeff_size; ++i) {
-		if (diff_count > i)
-			coeff[i]= 0;
-		coeff[i - diff_count] += fact(diff_count)/fact(i - diff_count)*coeff[i];
+		if (i + diff_count >= coeff_size)
+			coeff[i]= 0.0;
+		else
+			coeff[i]= fact(i + diff_count)/fact(i)*coeff[i + diff_count];
 	}
 }
 
@@ -140,10 +141,10 @@ void sphericalHarmonics(double* cos_coeff, int l, int m)
 	// P_lm(cos(theta)) = (-1)^m * sin(theta)^m * D^m P_l(cos(theta))
 	legendre(cos_coeff, l);
 	differentiate(cos_coeff, l + 1, m);
+	double normalization= 
+		std::sqrt( (2*l + 1.0)/(4*pi)*fact(l - m)/fact(l + m) );
 	for (int i= 0; i <= l; ++i)
-		cos_coeff[i] *= m % 2 ? -1 : 1;
-
-	/// @todo Normalization factor
+		cos_coeff[i] *= (m % 2 ? -1 : 1)*normalization;
 }
 
 inline
@@ -156,12 +157,27 @@ void testMath()
 	assert(binomial(10, 4) == 210);
 	assert(binomial(1, 77) == 0);
 
-	double lag[4]= {};
-	double lag_correct[4]= {10, -10, 2.5, -1.0/6};
-	laguerre(lag, 3, 2);
-	for (int i= 0; i < 4; ++i)
-		assert(std::abs(lag[i] - lag_correct[i]) < 0.0001);
+	{ // Laguerre coefficients
+		double lag[4]= {};
+		double lag_correct[4]= {10, -10, 2.5, -1.0/6};
+		laguerre(lag, 3, 2);
+		for (int i= 0; i < 4; ++i) {
+			assert(std::abs(lag[i] - lag_correct[i]) < 0.0001);
+		}
+	}
 
+	{ // Differentiation
+		double diff[5]= {5, 4, 3, 2, 1};
+		double diff_correct[5]= {6, 12, 12, 0, 0};
+		differentiate(diff, 5, 2);
+		for (int i= 0; i < 5; ++i) {
+			assert(std::abs(diff[i] - diff_correct[i]) < 0.0001);
+		}
+	}
+
+	{ // Spherical harmonic coefficients
+		/// @todo
+	}
 }
 
 } // qm
