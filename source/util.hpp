@@ -137,6 +137,7 @@ void differentiate(double* coeff, int coeff_size, int diff_count)
 inline
 void sphericalHarmonics(double* cos_coeff, int l, int m)
 {
+	assert(l >= 0 && m >= 0);
 	// Calculate coefficients for associated legendre polynomials
 	// P_lm(cos(theta)) = (-1)^m * sin(theta)^m * D^m P_l(cos(theta))
 	legendre(cos_coeff, l);
@@ -175,8 +176,40 @@ void testMath()
 		}
 	}
 
+	{ // Legendre coefficients
+		double leg[5];
+		double leg_correct[5]= {3.0/8, 0, -30.0/8, 0, 35.0/8};
+		legendre(leg, 4);
+		for (int i= 0; i < 5; ++i) {
+			assert(std::abs(leg[i] - leg_correct[i]) < 0.0001);
+		}
+	}
+
 	{ // Spherical harmonic coefficients
-		/// @todo
+		{
+			double sphe[1];
+			sphericalHarmonics(sphe, 0, 0);
+			assert(std::abs(sphe[0] - 1.0/std::sqrt(4*pi)) < 0.001);
+		}
+
+		{
+			double sphe[3];
+			double sphe_correct[3]= { 0, -std::sqrt(15.0/(8*pi)), 0};
+			sphericalHarmonics(sphe, 2, 1);
+			for (int i= 0; i < 5; ++i) {
+				assert(std::abs(sphe[i] - sphe_correct[i]) < 0.0001);
+			}
+		}
+
+		{
+			double sphe[9];
+			double mul= 1.0/128*std::sqrt(40755.0/pi);
+			double sphe_correct[9]= { 0, -3*mul, 0, 17*mul, 0, 0, 0, 0, 0};
+			sphericalHarmonics(sphe, 9, 6);
+			for (int i= 0; i < 9; ++i) {
+				assert(std::abs(sphe[i] - sphe_correct[i]) < 0.0001);
+			}
+		}
 	}
 }
 
