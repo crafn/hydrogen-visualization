@@ -59,7 +59,7 @@ struct StackString {
 
 	StackString(): length(0)
 	{ str[0]= 0; }
-	void append(const char *format, ...)
+	void append(const char* format, ...)
 	{
 		va_list args;
 		va_start(args, format);
@@ -159,28 +159,31 @@ void testMath()
 	assert(binomial(1, 77) == 0);
 
 	{ // Laguerre coefficients
-		double lag[4]= {};
-		double lag_correct[4]= {10, -10, 2.5, -1.0/6};
-		laguerre(lag, 3, 2);
-		for (int i= 0; i < 4; ++i) {
+		const int size= 4;
+		double lag[size]= {};
+		double lag_correct[size]= {10, -10, 2.5, -1.0/6};
+		laguerre(lag, size - 1, 2);
+		for (int i= 0; i < size; ++i) {
 			assert(std::abs(lag[i] - lag_correct[i]) < 0.0001);
 		}
 	}
 
 	{ // Differentiation
-		double diff[5]= {5, 4, 3, 2, 1};
-		double diff_correct[5]= {6, 12, 12, 0, 0};
-		differentiate(diff, 5, 2);
-		for (int i= 0; i < 5; ++i) {
+		const int size= 5;
+		double diff[size]= {5, 4, 3, 2, 1};
+		double diff_correct[size]= {6, 12, 12, 0, 0};
+		differentiate(diff, size, 2);
+		for (int i= 0; i < size; ++i) {
 			assert(std::abs(diff[i] - diff_correct[i]) < 0.0001);
 		}
 	}
 
 	{ // Legendre coefficients
-		double leg[5];
-		double leg_correct[5]= {3.0/8, 0, -30.0/8, 0, 35.0/8};
-		legendre(leg, 4);
-		for (int i= 0; i < 5; ++i) {
+		const int size= 5;
+		double leg[size];
+		double leg_correct[size]= {3.0/8, 0, -30.0/8, 0, 35.0/8};
+		legendre(leg, size - 1);
+		for (int i= 0; i < size; ++i) {
 			assert(std::abs(leg[i] - leg_correct[i]) < 0.0001);
 		}
 	}
@@ -193,20 +196,22 @@ void testMath()
 		}
 
 		{
-			double sphe[3];
-			double sphe_correct[3]= { 0, -std::sqrt(15.0/(8*pi)), 0};
-			sphericalHarmonics(sphe, 2, 1);
-			for (int i= 0; i < 5; ++i) {
+			const int size= 3;
+			double sphe[size];
+			double sphe_correct[size]= { 0, -std::sqrt(15.0/(8*pi)), 0};
+			sphericalHarmonics(sphe, size - 1, 1);
+			for (int i= 0; i < size; ++i) {
 				assert(std::abs(sphe[i] - sphe_correct[i]) < 0.0001);
 			}
 		}
 
 		{
-			double sphe[10];
+			const int size= 10;
+			double sphe[size];
 			double mul= 1.0/128*std::sqrt(40755.0/pi);
-			double sphe_correct[10]= { 0, -3*mul, 0, 17*mul, 0, 0, 0, 0, 0, 0};
-			sphericalHarmonics(sphe, 9, 6);
-			for (int i= 0; i < 10; ++i) {
+			double sphe_correct[size]= { 0, -3*mul, 0, 17*mul, 0, 0, 0, 0, 0, 0};
+			sphericalHarmonics(sphe, size - 1, 6);
+			for (int i= 0; i < size; ++i) {
 				assert(std::abs(sphe[i] - sphe_correct[i]) < 0.0001);
 			}
 		}

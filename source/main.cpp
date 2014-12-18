@@ -103,23 +103,35 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 				if (laguerre_coeff[i] == 0.0)
 					continue;
 
-				hydrogen_str.append("+%e*pow(%s, %i.0)", laguerre_coeff[i], rho_str, i);
+				hydrogen_str.append("+%e", laguerre_coeff[i]);
+				if (i != 0)
+					hydrogen_str.append("*pow(%s, %i.0)", rho_str, i);
 			}
 			hydrogen_str.append(")");
 		}
 		hydrogen_str.append("*");
 
 		{ // Y
-			hydrogen_str.append(
-				"pow(sin_theta, %i.0)*(",
-				m); // Dropping e^(imphi)
+			if (m != 0)
+				hydrogen_str.append(
+					"%s*pow(abs(sin_theta), %i.0)*",
+					(m % 2 ? "sign(sin_theta)" : "1.0"),
+					m); // Dropping e^(imphi)
+			hydrogen_str.append("(");
+
 			double spherical_coeff[poly_term_count]= {};
 			assert(l - 1 < poly_term_count);
 			sphericalHarmonics(spherical_coeff, l, m);
 			for (int i= 0; i < poly_term_count; ++i) {
 				if (spherical_coeff[i] == 0.0)
 					continue;
-				hydrogen_str.append("+%e*pow(cos_theta, %i)", spherical_coeff[i], i);
+
+				hydrogen_str.append("+%e", spherical_coeff[i]);
+				if (i != 0)
+					hydrogen_str.append(
+						"*%s*pow(abs(cos_theta), %i.0)",
+						(i % 2 ? "sign(cos_theta)" : "1.0"),
+						i);
 			}
 			hydrogen_str.append(")");
 		}
@@ -150,13 +162,6 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		"float rand(vec2 co){"
 		"    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453);"
 		"}"
-		"vec2 sample(vec3 sphe_p)" // x emission, y absorption
-		"{"
-		"	float cos_theta= cos(sphe_p.y); /* @todo don't calculate */"
-		"	float sin_theta= sin(sphe_p.y); /* @todo don't calculate */"
-		"	float value= WAVEFUNC(sphe_p.x, sphe_p.y, sphe_p.z, cos_theta, sin_theta);"
-		"	return vec2(value*value*2.34567890, 0.0);"
-		"}"
 		"void main()"
 		"{"
 		"	vec3 n= normalize(v_normal);"
@@ -164,18 +169,22 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		"	float intensity= 0.0;"
 		"	const float dl= 2.0/SAMPLE_COUNT;"
 		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
-		"		vec3 cart_p= v_pos + n*2.0*float(SAMPLE_COUNT - i - 1)/SAMPLE_COUNT;"
+		"		vec3 cart_p= v_pos + n*2.0*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
 		"		float dist= sqrt(dot(cart_p, cart_p)); /* @todo don't calculate */"
 		"		vec3 sphe_p= vec3(dist, acos(cart_p.z/dist), atan(cart_p.y, cart_p.x));"
-		"		vec2 s= sample(sphe_p);"
-		"		intensity= max(0, intensity + (s.x - s.y*intensity)*dl/2.0);"
+		"		float cos_theta= cos(sphe_p.y); /* @todo don't calculate */"
+		"		float sin_theta= sin(sphe_p.y); /* @todo don't calculate */"
+		"		float value= WAVEFUNC(sphe_p.x, sphe_p.y, -sphe_p.z, cos_theta, sin_theta);\n"
+		"		float emission= value*value;"
+		"		float absorption= 0.0;"
+		"		intensity= max(0, intensity + (emission - absorption*intensity)*dl/2.0);"
 		"	}"
 		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
 		"	gl_FragColor= vec4(color*intensity, 1.0);"
 		"}"
 		"\n";
 
-	const std::size_t buf_size= 2048;
+	const std::size_t buf_size= 1024*4;
 	char buf[buf_size];
 	std::snprintf(buf,
 		buf_size,
