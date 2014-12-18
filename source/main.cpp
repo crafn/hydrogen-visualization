@@ -50,15 +50,16 @@ struct Program {
 	// Slider settings
 	float phase;
 	float sampleCount;
-	float resoMul;
-	float filtering;
+	float resoMul; 
+	float filtering; // bool
 	float r, g, b;
-	float complexColor;
+	float complexColor; // bool
+	float absorption;
 	float scale;
 	float n, l, m;
 };
 
-Program::VolumeShader createVolumeShader(int sample_count, float scale, bool complex_color, int n, int l, int m)
+Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, float absorption, float scale, int n, int l, int m)
 {
 	/// @todo Remove
 	testMath();
@@ -190,11 +191,11 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, bool com
 		"\n#else\n"
 		"		vec3 emission= psi_real*psi_real*color;"
 		"\n#endif\n"
-		"		float absorption= 0.0;"
+		"		float absorption= psi_real*psi_real*ABSORPTION_MUL;"
 		"		intensity=	intensity + (emission - absorption*intensity)*dl/2.0;"
 		"		intensity= max(vec3(0.0, 0.0, 0.0), intensity);"
 		"	}"
-		//"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
+		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
 		"	gl_FragColor= vec4(intensity, 1.0);"
 		"}"
 		"\n";
@@ -207,11 +208,13 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, bool com
 		"#define SAMPLE_COUNT %i\n"
 		"#define WAVEFUNC_REAL(r, theta, phi, cos_theta, sin_theta) (%s)\n"
 		"#define WAVEFUNC_PHASE(phi) (%s)\n"
-		"#define COMPLEX_COLOR %i\n",
+		"#define COMPLEX_COLOR %i\n"
+		"#define ABSORPTION_MUL %e\n",
 		sample_count,
 		hydrogen_real.str,
 		hydrogen_phase.str,
-		complex_color);
+		complex_color,
+		absorption);
 	const GLchar* fs_src[]= { buf, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
@@ -349,12 +352,13 @@ void init(Env& env, Program& prog)
 		prog.g= 0.6;
 		prog.b= 0.4;
 		prog.complexColor= 0.0;
+		prog.absorption= 0.0;
 		prog.scale= 0.5;
 		prog.n= 1;
 		prog.l= 0;
 		prog.m= 0;
 
-		prog.shader= createVolumeShader(prog.sampleCount, prog.scale, prog.complexColor, prog.n, prog.l, prog.m);
+		prog.shader= createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.n, prog.l, prog.m);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -444,6 +448,7 @@ void frame(const Env& env, Program& prog)
 		{ "G",				0.0,	2.0,	prog.g,				3, false },
 		{ "B",				0.0,	2.0,	prog.b,				3, false },
 		{ "Complex color",	0,		1,		prog.complexColor,	0, true },
+		{ "Absorption",		0.0,	1.0,	prog.absorption,	3, true },
 		{ "scale",			0.001,	1.0,	prog.scale,			3, true },
 		{ "n",				1,		20,		prog.n,				0, true },
 		{ "l",				0,		20,		prog.l,				0, true },
@@ -474,7 +479,7 @@ void frame(const Env& env, Program& prog)
 											prog.shader.vs,
 											prog.shader.fs);
 					prog.shader=
-						createVolumeShader(prog.sampleCount, prog.scale, prog.complexColor, prog.n, prog.l, prog.m);
+						createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.n, prog.l, prog.m);
 				}
 			} else {
 				slider_hover[i]= false;
