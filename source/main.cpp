@@ -53,11 +53,12 @@ struct Program {
 	float resoMul;
 	float filtering;
 	float r, g, b;
+	float complexColor;
 	float scale;
 	float n, l, m;
 };
 
-Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, int l, int m)
+Program::VolumeShader createVolumeShader(int sample_count, float scale, bool complex_color, int n, int l, int m)
 {
 	/// @todo Remove
 	testMath();
@@ -70,7 +71,8 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 	double bohr_radius= std::exp(scale*0.25) - 0.99999;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
-	StackString<1024> hydrogen_str;
+	StackString<1024> hydrogen_real; // Real multiplier
+	StackString<64> hydrogen_phase; // Complex phase
 	{
 		// Form a hydrogen wave function |nlm> in four parts
 		// psi_nlm(r, theta, phi) = C*E*L*Y, where
@@ -84,17 +86,17 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
 
 		// C
-		hydrogen_str.append("%e",
+		hydrogen_real.append("%e",
 			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
 						fact(n - l - 1)/(2*n*fact(n + l))));
-		hydrogen_str.append("*");
+		hydrogen_real.append("*");
 
 		// E
-		hydrogen_str.append("exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
-		hydrogen_str.append("*");
+		hydrogen_real.append("exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+		hydrogen_real.append("*");
 
 		{ // L
-			hydrogen_str.append("(");
+			hydrogen_real.append("(");
 			double laguerre_coeff[poly_term_count]= {};
 			assert(n - l < poly_term_count);
 
@@ -103,21 +105,21 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 				if (laguerre_coeff[i] == 0.0)
 					continue;
 
-				hydrogen_str.append("+%e", laguerre_coeff[i]);
+				hydrogen_real.append("+%e", laguerre_coeff[i]);
 				if (i != 0)
-					hydrogen_str.append("*pow(%s, %i.0)", rho_str, i);
+					hydrogen_real.append("*pow(%s, %i.0)", rho_str, i);
 			}
-			hydrogen_str.append(")");
+			hydrogen_real.append(")");
 		}
-		hydrogen_str.append("*");
+		hydrogen_real.append("*");
 
 		{ // Y
 			if (m != 0)
-				hydrogen_str.append(
+				hydrogen_real.append(
 					"%s*pow(abs(sin_theta), %i.0)*",
 					(m % 2 ? "sign(sin_theta)" : "1.0"),
-					m); // Dropping e^(imphi)
-			hydrogen_str.append("(");
+					m);
+			hydrogen_real.append("(");
 
 			double spherical_coeff[poly_term_count]= {};
 			assert(l - 1 < poly_term_count);
@@ -126,17 +128,19 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 				if (spherical_coeff[i] == 0.0)
 					continue;
 
-				hydrogen_str.append("+%e", spherical_coeff[i]);
+				hydrogen_real.append("+%e", spherical_coeff[i]);
 				if (i != 0)
-					hydrogen_str.append(
+					hydrogen_real.append(
 						"*%s*pow(abs(cos_theta), %i.0)",
 						(i % 2 ? "sign(cos_theta)" : "1.0"),
 						i);
 			}
-			hydrogen_str.append(")");
+			hydrogen_real.append(")");
+
+			hydrogen_phase.append("%i.0*phi", m);
 		}
 
-		std::printf("Wave function:\n%s\n", hydrogen_str.str);
+		std::printf("Wave function:\n%s\n", hydrogen_real.str);
 	}
 
 	const GLchar* vs_src=
@@ -166,21 +170,32 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		"{"
 		"	vec3 n= normalize(v_normal);"
 		"	vec3 color= u_color;"
-		"	float intensity= 0.0;"
+		"	vec3 intensity= vec3(0.0, 0.0, 0.0);"
 		"	const float dl= 2.0/SAMPLE_COUNT;"
 		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
 		"		vec3 cart_p= v_pos + n*2.0*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
-		"		float dist= sqrt(dot(cart_p, cart_p)); /* @todo don't calculate */"
-		"		vec3 sphe_p= vec3(dist, acos(cart_p.z/dist), atan(cart_p.y, cart_p.x));"
-		"		float cos_theta= cos(sphe_p.y); /* @todo don't calculate */"
-		"		float sin_theta= sin(sphe_p.y); /* @todo don't calculate */"
-		"		float value= WAVEFUNC(sphe_p.x, sphe_p.y, -sphe_p.z, cos_theta, sin_theta);\n"
-		"		float emission= value*value;"
+		"		float r= sqrt(dot(cart_p, cart_p));"
+		"		float phi= atan(cart_p.y, cart_p.x);"
+		"		float cos_theta= cart_p.z/r;"
+		"		float theta= acos(cos_theta);"
+		"		float sin_theta= sin(theta);"
+		"		float psi_real= WAVEFUNC_REAL(r, theta, phi, cos_theta, sin_theta);"
+		"		float psi_phase= WAVEFUNC_PHASE(phi);"
+		"		psi_phase += 3.1415816*(0.5 - 0.5*sign(psi_real));"
+		"		psi_real= abs(psi_real)*3.1235;"
+		//"		if (psi_real < 1.0) psi_real= 0.0;"
+		//"		else psi_real= 2.0;\n"
+		"\n#if COMPLEX_COLOR == 1\n"
+		"		vec3 emission= psi_real*psi_real*normalize(vec3(0.5 - 0.5*cos(psi_phase), 0.2, 0.5 + 0.5*sin(psi_phase)));"
+		"\n#else\n"
+		"		vec3 emission= psi_real*psi_real*color;"
+		"\n#endif\n"
 		"		float absorption= 0.0;"
-		"		intensity= max(0, intensity + (emission - absorption*intensity)*dl/2.0);"
+		"		intensity=	intensity + (emission - absorption*intensity)*dl/2.0;"
+		"		intensity= max(vec3(0.0, 0.0, 0.0), intensity);"
 		"	}"
-		"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
-		"	gl_FragColor= vec4(color*intensity, 1.0);"
+		//"	intensity += rand(v_pos.xy + vec2(u_time/100.0, 0))*0.01;"
+		"	gl_FragColor= vec4(intensity, 1.0);"
 		"}"
 		"\n";
 
@@ -190,9 +205,13 @@ Program::VolumeShader createVolumeShader(int sample_count, float scale, int n, i
 		buf_size,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
-		"#define WAVEFUNC(r, theta, phi, cos_theta, sin_theta) (%s)\n",
+		"#define WAVEFUNC_REAL(r, theta, phi, cos_theta, sin_theta) (%s)\n"
+		"#define WAVEFUNC_PHASE(phi) (%s)\n"
+		"#define COMPLEX_COLOR %i\n",
 		sample_count,
-		hydrogen_str.str);
+		hydrogen_real.str,
+		hydrogen_phase.str,
+		complex_color);
 	const GLchar* fs_src[]= { buf, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
@@ -326,15 +345,16 @@ void init(Env& env, Program& prog)
 		prog.sampleCount= 40;
 		prog.resoMul= 0.5;
 		prog.filtering= 0.0;
-		prog.r= 0.4;
-		prog.g= 0.8;
-		prog.b= 1.0;
+		prog.r= 1.0;
+		prog.g= 0.6;
+		prog.b= 0.4;
+		prog.complexColor= 0.0;
 		prog.scale= 0.5;
 		prog.n= 1;
 		prog.l= 0;
 		prog.m= 0;
 
-		prog.shader= createVolumeShader(prog.sampleCount, prog.scale, prog.n, prog.l, prog.m);
+		prog.shader= createVolumeShader(prog.sampleCount, prog.scale, prog.complexColor, prog.n, prog.l, prog.m);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -416,17 +436,18 @@ void frame(const Env& env, Program& prog)
 	};
 
 	static Slider sliders[]= {
-		{ "Phase",		0.0,	5.0,	prog.phase,			3, false },
-		{ "Samples",	5,		150,	prog.sampleCount,	0, true },
-		{ "Resolution",	0.01,	1.0,	prog.resoMul,		2, false },
-		{ "Filtering",	0,		1,		prog.filtering,		0, false },
-		{ "R",			0.0,	2.0,	prog.r,				3, false },
-		{ "G",			0.0,	2.0,	prog.g,				3, false },
-		{ "B",			0.0,	2.0,	prog.b,				3, false },
-		{ "scale",		0.001,	1.0,	prog.scale,			3, true },
-		{ "n",			1,		20,		prog.n,				0, true },
-		{ "l",			0,		20,		prog.l,				0, true },
-		{ "m",			0,		20,		prog.m,				0, true },
+		{ "Phase",			0.0,	5.0,	prog.phase,			3, false },
+		{ "Samples",		5,		150,	prog.sampleCount,	0, true },
+		{ "Resolution",		0.01,	1.0,	prog.resoMul,		2, false },
+		{ "Filtering",		0,		1,		prog.filtering,		0, false },
+		{ "R",				0.0,	2.0,	prog.r,				3, false },
+		{ "G",				0.0,	2.0,	prog.g,				3, false },
+		{ "B",				0.0,	2.0,	prog.b,				3, false },
+		{ "Complex color",	0,		1,		prog.complexColor,	0, true },
+		{ "scale",			0.001,	1.0,	prog.scale,			3, true },
+		{ "n",				1,		20,		prog.n,				0, true },
+		{ "l",				0,		20,		prog.l,				0, true },
+		{ "m",				0,		20,		prog.m,				0, true },
 	};
 	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
 	bool slider_hover[slider_count]= {};
@@ -453,7 +474,7 @@ void frame(const Env& env, Program& prog)
 											prog.shader.vs,
 											prog.shader.fs);
 					prog.shader=
-						createVolumeShader(prog.sampleCount, prog.scale, prog.n, prog.l, prog.m);
+						createVolumeShader(prog.sampleCount, prog.scale, prog.complexColor, prog.n, prog.l, prog.m);
 				}
 			} else {
 				slider_hover[i]= false;
