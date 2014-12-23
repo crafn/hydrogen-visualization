@@ -1,8 +1,14 @@
 #ifndef QM_GL_HPP
 #define QM_GL_HPP
 
-#include <GL/gl.h>
 #include "env.hpp"
+#if OS == OS_WINDOWS || OS == OS_LINUX
+#	include <GL/gl.h>
+#elif OS == OS_OSX
+#	include <OpenGL/gl.h>
+#endif
+
+namespace qm {
 
 #define BUFFER_OFFSET(i) ((char *)NULL + (i))
 
@@ -87,8 +93,6 @@ typedef void (*GlFramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint);
 GlFramebufferTexture2D glFramebufferTexture2D;
 typedef void (*GlDeleteFramebuffers)(GLsizei, GLuint*);
 GlDeleteFramebuffers glDeleteFramebuffers;
-
-namespace qm {
 
 inline
 void queryGlFuncs()

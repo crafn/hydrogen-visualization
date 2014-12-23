@@ -4,6 +4,8 @@
 
 #if OS == OS_LINUX
 #	include <unistd.h>
+#elif OS == OS_OSX
+#	include <mach-o/dyld.h>
 #endif
 
 namespace qm {
@@ -116,6 +118,22 @@ Env envInit()
 	
 	env.ticks= GetTickCount();
 
+#elif OS == OS_OSX
+	SDL_Init(SDL_INIT_VIDEO);
+	env.win= SDL_CreateWindow(
+		title,
+		SDL_WINDOWPOS_UNDEFINED,
+		SDL_WINDOWPOS_UNDEFINED,
+		reso.x,
+		reso.y,
+		SDL_WINDOW_OPENGL);
+	if (!env.win) {
+		std::printf("SDL Error: %s\n", SDL_GetError());
+		std::abort();
+	}
+
+	env.ctx= SDL_GL_CreateContext(env.win);
+	env.ticks= SDL_GetTicks();
 #endif
 
 	return env;
@@ -130,6 +148,10 @@ void envQuit(Env& env)
 	XCloseDisplay(env.dpy);
 #elif OS == OS_WINDOWS
 	wglDeleteContext(env.hGlrc);
+#elif OS == OS_OSX
+	SDL_GL_DeleteContext(env.ctx);
+	SDL_DestroyWindow(env.win);
+	SDL_Quit();
 #endif
 }
 
@@ -212,6 +234,32 @@ void envUpdate(Env& env)
 	DWORD new_ticks= env.ticks;
 	env.dt= (new_ticks - old_ticks)/1000.0;
 
+#elif OS == OS_OSX
+	SDL_Delay(1);
+	SDL_GL_SwapWindow(env.win);
+
+	SDL_Event e;
+	while(SDL_PollEvent(&e)) {
+		if (e.type == SDL_QUIT)
+			env.quitRequested= true;	
+	}
+
+	int x, y;
+	int state= SDL_GetMouseState(&x, &y);
+
+	env.cursorPos.x= 2.0*x/env.winSize.x - 1.0;
+	env.cursorPos.y= 1.0 - 2.0*y/env.winSize.y;
+
+	bool was_down= env.lmbDown;
+	env.lmbDown= state & SDL_BUTTON(SDL_BUTTON_LEFT);
+	if (!was_down && env.lmbDown) {
+		env.anchorPos= env.cursorPos;
+	}
+
+	unsigned int old_ticks= env.ticks;
+	env.ticks= SDL_GetTicks();
+	env.dt= (old_ticks - env.ticks)/1000.0;
+
 #endif
 
 	env.cursorDelta= env.cursorPos - prev_cursor_pos;
@@ -219,13 +267,20 @@ void envUpdate(Env& env)
 		env.anchorPos= env.cursorPos;
 }
 
+#if OS == OS_X
+
+#endif
+
 typedef void (*voidFunc)();
 voidFunc queryGlFunc(const char* name)
 {
+	voidFunc f= NULL;
 #if OS == OS_LINUX
-	voidFunc f=	glXGetProcAddressARB((const GLubyte*)name);
+	f= glXGetProcAddressARB((const GLubyte*)name);
 #elif OS == OS_WINDOWS
-	voidFunc f=	(voidFunc)wglGetProcAddress(name);
+	f= (voidFunc)wglGetProcAddress(name);
+#elif OS == OS_OSX
+	f= (voidFunc)SDL_GL_GetProcAddress(name);
 #endif
 	if (!f) {
 		std::printf("Failed to query gl function: %s\n", name);
