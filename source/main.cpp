@@ -9,37 +9,74 @@
 #include "fontdata.hpp"
 #include "gl.hpp"
 
+#define local_persist static
+
 namespace qm {
 
-struct Program {
-	struct VolumeShader {
-		GLuint vs, fs, prog;
-		GLint timeLoc;
-		GLint phaseLoc;
-		GLint colorLoc;
-		GLint transformLoc;
-	};
-	struct VolumeFbo {
-		GLuint fboId;
-		GLuint texId;
-		Vec2i reso;
-		bool filtering;
-	};
-	struct Font {
-		GLuint texId;
-		Vec2f uv[256]; // Lower left corners of characters
-		Vec2f charUvSize;
-		Vec2f whiteTexelUv;
-	};
-	struct GuiShader {
-		GLuint vs, fs, prog;
-		GLint texLoc;
-		GLint colorLoc;
-	};
-	struct QuadVbo {
-		GLuint vboId;
-	};
+const float sliderHeight= 0.05;
+const float sliderWidth= 0.65;
+struct Slider {
+	const char* title;
+	float min;
+	float max;
+	float* value;
+	int decimals;
+	bool recompile;
 
+	static float top(std::size_t i) { return 1.0 - i*sliderHeight; }
+	static float bottom(std::size_t i) { return top(i + 1); }
+	bool pointInside(std::size_t i, Vec2f p) const
+	{
+		return	p.x  >= -1.0	&& p.x < sliderWidth - 1.0 &&
+				p.y > bottom(i)	&& p.y < top(i);
+	}
+	float fraction() const
+	{
+		float f= (*value - min)/(max - min);
+		return f < 1 ? f : 1;
+	}
+	float coordToValue(float x) const
+	{
+		float v= CLAMP((1.0 + x)/sliderWidth*(max - min) + min, min, max);
+		return round(v, decimals);
+	}
+};
+
+struct VolumeShader {
+	GLuint vs, fs, prog;
+	GLint timeLoc;
+	GLint phaseLoc;
+	GLint colorLoc;
+	GLint transformLoc;
+};
+
+struct VolumeFbo {
+	GLuint fboId;
+	GLuint texId;
+	Vec2i reso;
+	bool filtering;
+};
+
+struct Font {
+	GLuint texId;
+	Vec2f uv[256]; // Lower left corners of characters
+	Vec2f charUvSize;
+	Vec2f whiteTexelUv;
+};
+
+struct GuiShader {
+	GLuint vs, fs, prog;
+	GLint texLoc;
+	GLint colorLoc;
+};
+
+struct QuadVbo {
+	GLuint vboId;
+};
+
+const std::size_t Program_maxSliders= 32;
+const std::size_t Program_maxWaves= 4;
+struct Program {
 	VolumeShader shader;
 	VolumeFbo fbo;
 	Font font;
@@ -48,6 +85,10 @@ struct Program {
 	float time;
 
 	// Slider settings
+	struct Wave {
+		float phase; // Additional factor: e^(i*phase)
+		float n, l, m; // Quantum numbers
+	};
 	float phase;
 	float sampleCount;
 	float resoMul; 
@@ -56,14 +97,28 @@ struct Program {
 	float complexColor; // bool
 	float absorption;
 	float scale;
-	float n, l, m;
+	StackArray<Wave, Program_maxWaves> waves;
+	StackArray<Slider, Program_maxSliders> sliders;
 };
 
-Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, float absorption, float scale, int n, int l, int m)
+VolumeShader createVolumeShader(
+		const int sample_count,
+		const bool complex_color,
+		const float absorption,
+		const float scale,
+		const Program::Wave* waves,
+		const std::size_t wave_count)
 {
 	/// @todo Remove
 	testMath();
 
+	assert(wave_count > 0);
+	const Program::Wave& wave= waves[0];
+
+	int n= wave.n;
+	int l= wave.l;
+	int m= wave.m;
+	assert(n > 0);
 	if (l > n - 1)
 		l= n - 1;
 	if (m > l)
@@ -72,8 +127,8 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 	double bohr_radius= std::exp(scale*0.25) - 0.99999;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
-	StackString<1024> hydrogen_real; // Real multiplier
-	StackString<64> hydrogen_phase; // Complex phase
+	StackString<1024> hydrogen_real= {}; // Real multiplier
+	StackString<64> hydrogen_phase= {}; // Complex phase
 	{
 		// Form a hydrogen wave function |nlm> in four parts
 		// psi_nlm(r, theta, phi) = C*E*L*Y, where
@@ -87,17 +142,17 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
 
 		// C
-		hydrogen_real.append("%e",
+		append(hydrogen_real, "%e",
 			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
 						fact(n - l - 1)/(2*n*fact(n + l))));
-		hydrogen_real.append("*");
+		append(hydrogen_real, "*");
 
 		// E
-		hydrogen_real.append("exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
-		hydrogen_real.append("*");
+		append(hydrogen_real, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+		append(hydrogen_real, "*");
 
 		{ // L
-			hydrogen_real.append("(");
+			append(hydrogen_real, "(");
 			double laguerre_coeff[poly_term_count]= {};
 			assert(n - l < poly_term_count);
 
@@ -106,21 +161,21 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 				if (laguerre_coeff[i] == 0.0)
 					continue;
 
-				hydrogen_real.append("+%e", laguerre_coeff[i]);
+				append(hydrogen_real, "+%e", laguerre_coeff[i]);
 				if (i != 0)
-					hydrogen_real.append("*pow(%s, %i.0)", rho_str, i);
+					append(hydrogen_real, "*pow(%s, %i.0)", rho_str, i);
 			}
-			hydrogen_real.append(")");
+			append(hydrogen_real, ")");
 		}
-		hydrogen_real.append("*");
+		append(hydrogen_real, "*");
 
 		{ // Y
 			if (m != 0)
-				hydrogen_real.append(
+				append(hydrogen_real,
 					"%s*pow(abs(sin_theta), %i.0)*",
 					(m % 2 ? "sign(sin_theta)" : "1.0"),
 					m);
-			hydrogen_real.append("(");
+			append(hydrogen_real, "(");
 
 			double spherical_coeff[poly_term_count]= {};
 			assert(l - 1 < poly_term_count);
@@ -129,16 +184,16 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 				if (spherical_coeff[i] == 0.0)
 					continue;
 
-				hydrogen_real.append("+%e", spherical_coeff[i]);
+				append(hydrogen_real, "+%e", spherical_coeff[i]);
 				if (i != 0)
-					hydrogen_real.append(
+					append(hydrogen_real,
 						"*%s*pow(abs(cos_theta), %i.0)",
 						(i % 2 ? "sign(cos_theta)" : "1.0"),
 						i);
 			}
-			hydrogen_real.append(")");
+			append(hydrogen_real, ")");
 
-			hydrogen_phase.append("%i.0*phi", m);
+			append(hydrogen_phase, "%i.0*phi + %f", m, wave.phase);
 		}
 
 		std::printf("Wave function:\n%s\n", hydrogen_real.str);
@@ -202,10 +257,8 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 		"}"
 		"\n";
 
-	const std::size_t buf_size= 1024*4;
-	char buf[buf_size];
-	std::snprintf(buf,
-		buf_size,
+	StackString<1024*4> buf= {};
+	append(buf,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
 		"#define WAVEFUNC_REAL(r, theta, phi, cos_theta, sin_theta) (%s)\n"
@@ -217,10 +270,10 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 		hydrogen_phase.str,
 		complex_color,
 		absorption);
-	const GLchar* fs_src[]= { buf, fs_template_src };
+	const GLchar* fs_src[]= { buf.str, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
-	Program::VolumeShader shd;
+	VolumeShader shd;
 	createGlShaderProgram(shd.prog, shd.vs, shd.fs, 1, &vs_src, fs_src_count, fs_src);
 	shd.timeLoc= glGetUniformLocation(shd.prog, "u_time");
 	shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
@@ -229,11 +282,11 @@ Program::VolumeShader createVolumeShader(int sample_count, bool complex_color, f
 	return shd;
 }
 
-Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
+VolumeFbo createFbo(Vec2i reso, bool filtering)
 {
 	GLenum filter= filtering ? GL_LINEAR : GL_NEAREST;
 
-	Program::VolumeFbo fbo;
+	VolumeFbo fbo;
 	fbo.reso= reso;
 	fbo.filtering= filtering;
 	glGenTextures(1, &fbo.texId);
@@ -252,11 +305,35 @@ Program::VolumeFbo createFbo(Vec2i reso, bool filtering)
 	return fbo;
 }
 
-void destroyFbo(Program::VolumeFbo& fbo)
+void destroyFbo(VolumeFbo& fbo)
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glDeleteFramebuffers(1, &fbo.fboId);
 	glDeleteTextures(1, &fbo.texId);
+}
+
+void addWave(Program& prog)
+{
+	Program::Wave w= {};
+	w.n= 1;
+	push(prog.waves, w);
+
+	Slider phase= { "Complex phase", 0.0, tau, &last(prog.waves).phase, 3, true };
+	Slider n= { "n", 1, 20, &last(prog.waves).n, 0, true };
+	Slider l= { "l", 0, 20, &last(prog.waves).l, 0, true };
+	Slider m= { "m", 0, 20, &last(prog.waves).m, 0, true };
+	push(prog.sliders, phase);
+	push(prog.sliders, n);
+	push(prog.sliders, l);
+	push(prog.sliders, m);
+}
+
+void removeWave(Program& prog)
+{
+	pop(prog.waves);
+	pop(prog.sliders); // n
+	pop(prog.sliders); // l
+	pop(prog.sliders); // m
 }
 
 void init(Env& env, Program& prog)
@@ -265,7 +342,7 @@ void init(Env& env, Program& prog)
 	queryGlFuncs();
 
 	{ // Font
-		Program::Font& font= prog.font;
+		Font& font= prog.font;
 		Vec2f char_size= cast<Vec2f>(g_font.charSize);
 		Vec2f font_size= cast<Vec2f>(g_font.size);
 		font.charUvSize= char_size/font_size; 
@@ -325,14 +402,14 @@ void init(Env& env, Program& prog)
 			"varying vec2 v_uv;"
 			"void main() { gl_FragColor= texture2D(u_tex, v_uv)*u_color; }\n";
 
-		Program::GuiShader& shd= prog.guiShader;
+		GuiShader& shd= prog.guiShader;
 		createGlShaderProgram(shd.prog, shd.vs, shd.fs, 1, &vs_src, 1, &fs_src);
 		shd.texLoc= glGetUniformLocation(shd.prog, "u_tex");
 		shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
 	}
 
 	{ // Vbo used at rendering quads
-		Program::QuadVbo& vbo= prog.vbo;
+		QuadVbo& vbo= prog.vbo;
 		glGenBuffers(1, &vbo.vboId);
 		glBindBuffer(GL_ARRAY_BUFFER, vbo.vboId);
 		glBufferData(GL_ARRAY_BUFFER, sizeof(Vec2f)*(4 + 4), NULL, GL_DYNAMIC_DRAW);
@@ -356,11 +433,26 @@ void init(Env& env, Program& prog)
 		prog.complexColor= 0.0;
 		prog.absorption= 0.0;
 		prog.scale= 0.5;
-		prog.n= 1;
-		prog.l= 0;
-		prog.m= 0;
 
-		prog.shader= createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.n, prog.l, prog.m);
+		Slider default_sliders[] = {
+			{ "Phase",			0.0,	5.0,	&prog.phase,			3, false },
+			{ "Samples",		5,		150,	&prog.sampleCount,		0, true },
+			{ "Resolution",		0.01,	1.0,	&prog.resoMul,			2, false },
+			{ "Filtering",		0,		1,		&prog.filtering,		0, false },
+			{ "R",				0.0,	2.0,	&prog.r,				3, false },
+			{ "G",				0.0,	2.0,	&prog.g,				3, false },
+			{ "B",				0.0,	2.0,	&prog.b,				3, false },
+			{ "Complex color",	0,		1,		&prog.complexColor,		0, true },
+			{ "Absorption",		0.0,	1.0,	&prog.absorption,		3, true },
+			{ "scale",			0.001,	1.0,	&prog.scale,			3, true },
+		};
+		const std::size_t default_slider_count= sizeof(default_sliders)/sizeof(*default_sliders);
+		for (std::size_t i= 0; i < default_slider_count; ++i)
+			push(prog.sliders, default_sliders[i]);
+
+		addWave(prog);
+
+		prog.shader= createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.waves.data, prog.waves.size);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -412,66 +504,21 @@ void frame(const Env& env, Program& prog)
 	prog.time += env.dt;
 	prog.phase += env.dt;
 
-	struct Slider {
-		const char* title;
-		const float& min;
-		const float& max;
-		float& value;
-		int decimals;
-		bool recompile;
+	bool slider_hover[Program_maxSliders]= {};
 
-		static float height() { return 0.05; }
-		static float width() { return 0.65; }
-		static float top(std::size_t i) { return 1.0 - i*height(); }
-		static float bottom(std::size_t i) { return top(i + 1); }
-		bool pointInside(std::size_t i, Vec2f p) const
-		{
-			return	p.x  >= -1.0	&& p.x < width() - 1.0 &&
-					p.y > bottom(i)	&& p.y < top(i);
-		}
-		float fraction() const
-		{
-			float f= (value - min)/(max - min);
-			return f < 1 ? f : 1;
-		}
-		float coordToValue(float x) const
-		{
-			float v= clamp<float>((1.0 + x)/width()*(max - min) + min, min, max);
-			return round(v, decimals);
-		}
-	};
-
-	static Slider sliders[]= {
-		{ "Phase",			0.0,	5.0,	prog.phase,			3, false },
-		{ "Samples",		5,		150,	prog.sampleCount,	0, true },
-		{ "Resolution",		0.01,	1.0,	prog.resoMul,		2, false },
-		{ "Filtering",		0,		1,		prog.filtering,		0, false },
-		{ "R",				0.0,	2.0,	prog.r,				3, false },
-		{ "G",				0.0,	2.0,	prog.g,				3, false },
-		{ "B",				0.0,	2.0,	prog.b,				3, false },
-		{ "Complex color",	0,		1,		prog.complexColor,	0, true },
-		{ "Absorption",		0.0,	1.0,	prog.absorption,	3, true },
-		{ "scale",			0.001,	1.0,	prog.scale,			3, true },
-		{ "n",				1,		20,		prog.n,				0, true },
-		{ "l",				0,		20,		prog.l,				0, true },
-		{ "m",				0,		20,		prog.m,				0, true },
-	};
-	const std::size_t slider_count= sizeof(sliders)/sizeof(*sliders);
-	bool slider_hover[slider_count]= {};
-
-	static Vec2f prev_delta;
-	static Vec2f rot;
+	local_persist Vec2f prev_delta;
+	local_persist Vec2f rot;
 
 	{ // User interaction
 		bool slider_activity= false;
-		for (std::size_t i= 0; i < slider_count; ++i) {
-			Slider& s= sliders[i];
+		for (std::size_t i= 0; i < prog.sliders.size; ++i) {
+			Slider& s= prog.sliders.data[i];
 			if (s.pointInside(i, env.anchorPos)) {
 				bool value_changed= false;
 				if (env.lmbDown) {
 					float new_value= s.coordToValue(env.cursorPos.x);
-					value_changed= new_value != s.value;
-					s.value= new_value;
+					value_changed= new_value != *s.value;
+					*s.value= new_value;
 				}
 				slider_hover[i]= true;
 				slider_activity= true;
@@ -481,7 +528,7 @@ void frame(const Env& env, Program& prog)
 											prog.shader.vs,
 											prog.shader.fs);
 					prog.shader=
-						createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.n, prog.l, prog.m);
+						createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.waves.data, prog.waves.size);
 				}
 			} else {
 				slider_hover[i]= false;
@@ -493,16 +540,20 @@ void frame(const Env& env, Program& prog)
 			prev_delta= smooth_delta;
 			
 			rot += smooth_delta*2;
-			rot.y= clamp<float>(rot.y, -tau/4, tau/4);
+			rot.y= CLAMP(rot.y, -tau/4, tau/4);
 		}
 	}
 
 	// Slider texts
 	const std::size_t slider_text_buf_size= 128;
-	char slider_text[slider_count][slider_text_buf_size]= {};
-	for (std::size_t i= 0; i < slider_count; ++i) {
+	char slider_text[Program_maxSliders][slider_text_buf_size]= {};
+	for (std::size_t i= 0; i < prog.sliders.size; ++i) {
+		Slider& slider= prog.sliders.data[i];
 		std::snprintf(	slider_text[i], slider_text_buf_size,
-						"%s - %.*f", sliders[i].title, sliders[i].decimals, sliders[i].value);
+						"%s - %.*f",
+						slider.title,
+						slider.decimals,
+						*slider.value);
 	}
 
 	{ // Adjust FBO
@@ -531,7 +582,7 @@ void frame(const Env& env, Program& prog)
 			-c2*s1,		-s2,	c2*c1,	1 // Translation around origin
 		};
 
-		Program::VolumeShader& shd= prog.shader;
+		VolumeShader& shd= prog.shader;
 		glUseProgram(shd.prog);
 		glUniform1f(shd.timeLoc, prog.time);
 		glUniform1f(shd.phaseLoc, prog.phase);
@@ -559,16 +610,16 @@ void frame(const Env& env, Program& prog)
 		glUniform4f(prog.guiShader.colorLoc, 0.1, 0.1, 0.1, 0.3);
 
 		// Background
-		drawRect(	Vec2f(-1.0, 1.0 - slider_count*Slider::height()),
-					Vec2f(Slider::width() - 1.0, 1.0),
+		drawRect(	Vec2f(-1.0, 1.0 - prog.sliders.size*sliderHeight),
+					Vec2f(sliderWidth - 1.0, 1.0),
 					white_uv, white_uv);
 
 		// Slider backgrounds
-		for (std::size_t i= 0; i < slider_count; ++i) {
-			Slider& s= sliders[i];
+		for (std::size_t i= 0; i < prog.sliders.size; ++i) {
+			Slider& s= prog.sliders.data[i];
 			float top= s.top(i);
 			float bottom= s.bottom(i);
-			float width= s.width()*s.fraction();
+			float width= sliderWidth*s.fraction();
 
 			if (!slider_hover[i])
 				glUniform4f(prog.guiShader.colorLoc, 0.3, 0.3, 0.3, 0.6);
@@ -581,8 +632,8 @@ void frame(const Env& env, Program& prog)
 
 		// Slider texts
 		glUniform4f(prog.guiShader.colorLoc, 0.8, 0.8, 0.8, 1.0);
-		for (std::size_t s_i= 0; s_i < slider_count; ++s_i) {
-			Slider& s= sliders[s_i];
+		for (std::size_t s_i= 0; s_i < prog.sliders.size; ++s_i) {
+			Slider& s= prog.sliders.data[s_i];
 			Vec2f pos= fitToGrid(Vec2f(-0.98, s.bottom(s_i)), env.winSize);
 
 			for (std::size_t c_i= 0; c_i < std::strlen(slider_text[s_i]); ++c_i) {
@@ -607,8 +658,8 @@ void frame(const Env& env, Program& prog)
 
 int main()
 {
-	qm::Env env;
-	qm::Program prog;
+	qm::Env env= {};
+	qm::Program prog= {};
 	qm::init(env, prog);
 
 	while (!env.quitRequested) {

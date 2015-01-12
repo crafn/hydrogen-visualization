@@ -52,31 +52,56 @@ Vec2f fitToGrid(Vec2f v, Vec2i reso)
 	return cast<Vec2f>(grid_v)/hreso- Vec2f(1, 1);
 }
 
-template <int Size>
+template <std::size_t Size>
 struct StackString {
 	char str[Size];
-	int length;
-
-	StackString(): length(0)
-	{ str[0]= 0; }
-	void append(const char* format, ...)
-	{
-		va_list args;
-		va_start(args, format);
-
-		std::size_t added= std::vsnprintf(str + length, Size - length, format, args);
-		assert(added >= 0);
-
-		va_end(args);
-
-		length += added;
-		assert(length < Size);
-	}
+	std::size_t length;
 };
 
-template <typename T>
-T clamp(T v, T min, T max)
-{ return v < min ? min : v > max ? max : v; }
+template <std::size_t Size>
+void append(StackString<Size>& s, const char* format, ...)
+{
+	va_list args;
+	va_start(args, format);
+
+	std::size_t added= std::vsnprintf(s.str + s.length, Size - s.length, format, args);
+	assert(added >= 0);
+
+	va_end(args);
+
+	s.length += added;
+	assert(s.length < Size);
+}
+
+template <typename T, std::size_t Size>
+struct StackArray {
+	T data[Size];
+	std::size_t size;
+};
+
+template <typename T, std::size_t Size>
+void push(StackArray<T, Size>& a, T t)
+{
+	assert(a.size < Size);
+	a.data[a.size]= t;
+	++a.size;
+	assert(a.size <= Size);
+}
+
+template <typename T, std::size_t Size>
+void pop(StackArray<T, Size>& a)
+{
+	assert(a.size > 0);
+	--a.size;
+}
+
+template <typename T, std::size_t Size>
+T& last(StackArray<T, Size>& a)
+{
+	assert(a.size > 0);
+	return a.data[a.size - 1];
+}
+#define CLAMP(v, min, max) (v < (min) ? (min) : v > (max) ? (max) : v)
 
 template <typename T>
 T round(T v, int decimals= 0)
