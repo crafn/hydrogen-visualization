@@ -96,6 +96,7 @@ struct Program {
 	float r, g, b;
 	float complexColor; // bool
 	float absorption;
+	float cutoff;
 	float scale;
 	StackArray<Wave, Program_maxWaves> waves;
 	StackArray<Slider, Program_maxSliders> sliders;
@@ -105,6 +106,7 @@ VolumeShader createVolumeShader(
 		const int sample_count,
 		const bool complex_color,
 		const float absorption,
+		const float cutoff,
 		const float scale,
 		const Program::Wave* waves,
 		const std::size_t wave_count)
@@ -127,7 +129,7 @@ VolumeShader createVolumeShader(
 	double bohr_radius= std::exp(scale*0.25) - 0.99999;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
-	StackString<1024> hydrogen_real= {}; // Real multiplier
+	StackString<1024> hydrogen_amplitude= {}; // Real multiplier
 	StackString<64> hydrogen_phase= {}; // Complex phase
 	{
 		// Form a hydrogen wave function |nlm> in four parts
@@ -142,17 +144,17 @@ VolumeShader createVolumeShader(
 		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
 
 		// C
-		append(hydrogen_real, "%e",
+		append(hydrogen_amplitude, "%e",
 			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
 						fact(n - l - 1)/(2*n*fact(n + l))));
-		append(hydrogen_real, "*");
+		append(hydrogen_amplitude, "*");
 
 		// E
-		append(hydrogen_real, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
-		append(hydrogen_real, "*");
+		append(hydrogen_amplitude, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+		append(hydrogen_amplitude, "*");
 
 		{ // L
-			append(hydrogen_real, "(");
+			append(hydrogen_amplitude, "(");
 			double laguerre_coeff[poly_term_count]= {};
 			assert(n - l < poly_term_count);
 
@@ -161,21 +163,21 @@ VolumeShader createVolumeShader(
 				if (laguerre_coeff[i] == 0.0)
 					continue;
 
-				append(hydrogen_real, "+%e", laguerre_coeff[i]);
+				append(hydrogen_amplitude, "+%e", laguerre_coeff[i]);
 				if (i != 0)
-					append(hydrogen_real, "*pow(%s, %i.0)", rho_str, i);
+					append(hydrogen_amplitude, "*pow(%s, %i.0)", rho_str, i);
 			}
-			append(hydrogen_real, ")");
+			append(hydrogen_amplitude, ")");
 		}
-		append(hydrogen_real, "*");
+		append(hydrogen_amplitude, "*");
 
 		{ // Y
 			if (m != 0)
-				append(hydrogen_real,
+				append(hydrogen_amplitude,
 					"%s*pow(abs(sin_theta), %i.0)*",
 					(m % 2 ? "sign(sin_theta)" : "1.0"),
 					m);
-			append(hydrogen_real, "(");
+			append(hydrogen_amplitude, "(");
 
 			double spherical_coeff[poly_term_count]= {};
 			assert(l - 1 < poly_term_count);
@@ -184,19 +186,19 @@ VolumeShader createVolumeShader(
 				if (spherical_coeff[i] == 0.0)
 					continue;
 
-				append(hydrogen_real, "+%e", spherical_coeff[i]);
+				append(hydrogen_amplitude, "+%e", spherical_coeff[i]);
 				if (i != 0)
-					append(hydrogen_real,
+					append(hydrogen_amplitude,
 						"*%s*pow(abs(cos_theta), %i.0)",
 						(i % 2 ? "sign(cos_theta)" : "1.0"),
 						i);
 			}
-			append(hydrogen_real, ")");
+			append(hydrogen_amplitude, ")");
 
 			append(hydrogen_phase, "%i.0*phi + %f", m, wave.phase);
 		}
 
-		std::printf("Wave function:\n%s\n", hydrogen_real.str);
+		std::printf("Wave function:\n%s\n", hydrogen_amplitude.str);
 	}
 
 	const GLchar* vs_src=
@@ -236,14 +238,15 @@ VolumeShader createVolumeShader(
 		"		float cos_theta= cart_p.z/r;"
 		"		float theta= acos(cos_theta);"
 		"		float sin_theta= sin(theta);"
-		"		float psi_real= WAVEFUNC_REAL(r, theta, phi, cos_theta, sin_theta);"
-		"		float psi_phase= WAVEFUNC_PHASE(phi);"
-		"		psi_phase += 3.1415816*(0.5 - 0.5*sign(psi_real));"
-		"		psi_real= abs(psi_real)*3.1235;"
-		//"		psi_real= floor(min(1.0, psi_real));"
-		"		float P= psi_real*psi_real;"
+		"		float psi_amplitude= 3.54321*WAVEFUC_AMPLITUDE(r, theta, phi, cos_theta, sin_theta);" // Can be negative
+		"		float psi_phase= WAVEFUNC_PHASE(phi);" // Not taking account possible negative amplitude
+		"		float psi_real= psi_amplitude*cos(psi_phase);"
+		"		float psi_imag= psi_amplitude*sin(psi_phase);"
+		"		float psi_complex_phase= atan(psi_imag, psi_real);"
+		"		float P= psi_amplitude*psi_amplitude;"
+		"		if (P < CUTOFF) P= 0;"
 		"\n#if COMPLEX_COLOR == 1\n"
-		"		vec3 emission= P*normalize(vec3(0.5 - 0.5*cos(psi_phase), 0.2, 0.5 + 0.5*sin(psi_phase)));"
+		"		vec3 emission= P*normalize(vec3(0.5 - 0.5*cos(psi_complex_phase), 0.2, 0.5 + 0.5*sin(psi_complex_phase)));"
 		"\n#else\n"
 		"		vec3 emission= P*color;"
 		"\n#endif\n"
@@ -261,15 +264,17 @@ VolumeShader createVolumeShader(
 	append(buf,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
-		"#define WAVEFUNC_REAL(r, theta, phi, cos_theta, sin_theta) (%s)\n"
+		"#define WAVEFUC_AMPLITUDE(r, theta, phi, cos_theta, sin_theta) (%s)\n"
 		"#define WAVEFUNC_PHASE(phi) (%s)\n"
 		"#define COMPLEX_COLOR %i\n"
-		"#define ABSORPTION_MUL %e\n",
+		"#define ABSORPTION_MUL %e\n"
+		"#define CUTOFF %f\n",
 		sample_count,
-		hydrogen_real.str,
+		hydrogen_amplitude.str,
 		hydrogen_phase.str,
 		complex_color,
-		absorption);
+		absorption,
+		cutoff);
 	const GLchar* fs_src[]= { buf.str, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
@@ -432,6 +437,7 @@ void init(Env& env, Program& prog)
 		prog.b= 0.4;
 		prog.complexColor= 0.0;
 		prog.absorption= 0.0;
+		prog.cutoff= 0.0;
 		prog.scale= 0.5;
 
 		Slider default_sliders[] = {
@@ -444,7 +450,8 @@ void init(Env& env, Program& prog)
 			{ "B",				0.0,	2.0,	&prog.b,				3, false },
 			{ "Complex color",	0,		1,		&prog.complexColor,		0, true },
 			{ "Absorption",		0.0,	1.0,	&prog.absorption,		3, true },
-			{ "scale",			0.001,	1.0,	&prog.scale,			3, true },
+			{ "Cutoff",			0.0,	3.0,	&prog.cutoff,			3, true },
+			{ "Scale",			0.001,	1.0,	&prog.scale,			3, true },
 		};
 		const std::size_t default_slider_count= sizeof(default_sliders)/sizeof(*default_sliders);
 		for (std::size_t i= 0; i < default_slider_count; ++i)
@@ -452,7 +459,14 @@ void init(Env& env, Program& prog)
 
 		addWave(prog);
 
-		prog.shader= createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.waves.data, prog.waves.size);
+		prog.shader=
+			createVolumeShader(
+				prog.sampleCount,
+				prog.complexColor,
+				prog.absorption,
+				prog.cutoff,
+				prog.scale, 
+				prog.waves.data, prog.waves.size);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -528,7 +542,13 @@ void frame(const Env& env, Program& prog)
 											prog.shader.vs,
 											prog.shader.fs);
 					prog.shader=
-						createVolumeShader(prog.sampleCount, prog.complexColor, prog.absorption, prog.scale, prog.waves.data, prog.waves.size);
+						createVolumeShader(
+							prog.sampleCount,
+							prog.complexColor,
+							prog.absorption,
+							prog.cutoff,
+							prog.scale, 
+							prog.waves.data, prog.waves.size);
 				}
 			} else {
 				slider_hover[i]= false;
