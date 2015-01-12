@@ -2,15 +2,13 @@
 #include <cstdio>
 #include "env.hpp"
 
-#if OS == OS_LINUX
+#if PLATFORM == PLATFORM_LINUX
 #	include <unistd.h>
-#elif OS == OS_OSX
-#	include <mach-o/dyld.h>
 #endif
 
 namespace qm {
 
-#if OS == OS_WINDOWS
+#if PLATFORM == PLATFORM_WINDOWS
 bool Env::closeEvent;
 #endif
 
@@ -26,7 +24,7 @@ Env envInit()
 	env.winSize= reso;
 	env.quitRequested= false;
 
-#if OS == OS_LINUX
+#if PLATFORM == PLATFORM_LINUX
 	env.dpy= XOpenDisplay(NULL);
 	if(env.dpy == NULL)
 		std::abort();
@@ -60,7 +58,7 @@ Env envInit()
 
 	clock_gettime(CLOCK_MONOTONIC, &env.ts);
 
-#elif OS == OS_WINDOWS
+#elif PLATFORM == PLATFORM_WINDOWS
 	struct WndProc {
 		static LRESULT CALLBACK call(
 			HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
@@ -118,7 +116,7 @@ Env envInit()
 	
 	env.ticks= GetTickCount();
 
-#elif OS == OS_OSX
+#elif PLATFORM == PLATFORM_SDL
 	SDL_Init(SDL_INIT_VIDEO);
 	env.win= SDL_CreateWindow(
 		title,
@@ -141,14 +139,14 @@ Env envInit()
 
 void envQuit(Env& env)
 {
-#if OS == OS_LINUX
+#if PLATFORM == PLATFORM_LINUX
 	glXMakeCurrent(env.dpy, None, NULL);
 	glXDestroyContext(env.dpy, env.ctx);
 	XDestroyWindow(env.dpy, env.win);
 	XCloseDisplay(env.dpy);
-#elif OS == OS_WINDOWS
+#elif PLATFORM == PLATFORM_WINDOWS
 	wglDeleteContext(env.hGlrc);
-#elif OS == OS_OSX
+#elif PLATFORM == PLATFORM_SDL
 	SDL_GL_DeleteContext(env.ctx);
 	SDL_DestroyWindow(env.win);
 	SDL_Quit();
@@ -159,7 +157,7 @@ void envUpdate(Env& env)
 {
 	Vec2f prev_cursor_pos= env.cursorPos;
 
-#if OS == OS_LINUX
+#if PLATFORM == PLATFORM_LINUX
 	usleep(1);
 	glXSwapBuffers(env.dpy, env.win);
 
@@ -204,7 +202,7 @@ void envUpdate(Env& env)
 	long new_us= env.ts.tv_nsec/1000 + env.ts.tv_sec*1000000;
 	env.dt= (new_us - old_us)/1000000.0;
 
-#elif OS == OS_WINDOWS
+#elif PLATFORM == PLATFORM_WINDOWS
 	Sleep(1);
 	SwapBuffers(env.hDC);
 
@@ -234,7 +232,7 @@ void envUpdate(Env& env)
 	DWORD new_ticks= env.ticks;
 	env.dt= (new_ticks - old_ticks)/1000.0;
 
-#elif OS == OS_OSX
+#elif PLATFORM == PLATFORM_SDL
 	SDL_Delay(1);
 	SDL_GL_SwapWindow(env.win);
 
@@ -267,19 +265,15 @@ void envUpdate(Env& env)
 		env.anchorPos= env.cursorPos;
 }
 
-#if OS == OS_X
-
-#endif
-
 typedef void (*voidFunc)();
 voidFunc queryGlFunc(const char* name)
 {
 	voidFunc f= NULL;
-#if OS == OS_LINUX
+#if PLATFORM == PLATFORM_LINUX
 	f= glXGetProcAddressARB((const GLubyte*)name);
-#elif OS == OS_WINDOWS
+#elif PLATFORM == PLATFORM_WINDOWS
 	f= (voidFunc)wglGetProcAddress(name);
-#elif OS == OS_OSX
+#elif PLATFORM == PLATFORM_SDL
 	f= (voidFunc)SDL_GL_GetProcAddress(name);
 #endif
 	if (!f) {
