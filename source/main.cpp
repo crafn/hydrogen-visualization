@@ -441,7 +441,7 @@ void init(Env& env, Program& prog)
 		prog.scale= 0.5;
 
 		Slider default_sliders[] = {
-			{ "Phase",			0.0,	5.0,	&prog.phase,			3, false },
+			{ "Time",			0.0,	5.0,	&prog.phase,			3, false },
 			{ "Samples",		5,		150,	&prog.sampleCount,		0, true },
 			{ "Resolution",		0.01,	1.0,	&prog.resoMul,			2, false },
 			{ "Filtering",		0,		1,		&prog.filtering,		0, false },

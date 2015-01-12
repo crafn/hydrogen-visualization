@@ -256,7 +256,7 @@ void envUpdate(Env& env)
 
 	unsigned int old_ticks= env.ticks;
 	env.ticks= SDL_GetTicks();
-	env.dt= (old_ticks - env.ticks)/1000.0;
+	env.dt= (env.ticks - old_ticks)/1000.0;
 
 #endif
 
