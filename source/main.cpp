@@ -75,7 +75,7 @@ struct QuadVbo {
 };
 
 const std::size_t Program_maxSliders= 32;
-const std::size_t Program_maxWaves= 4;
+const std::size_t Program_maxWaves= 2;
 struct Program {
 	VolumeShader shader;
 	VolumeFbo fbo;
@@ -86,6 +86,7 @@ struct Program {
 
 	// Slider settings
 	struct Wave {
+		float amplitude;
 		float phase; // Additional factor: e^(i*phase)
 		float n, l, m; // Quantum numbers
 	};
@@ -115,38 +116,44 @@ VolumeShader createVolumeShader(
 	testMath();
 
 	assert(wave_count > 0);
-	const Program::Wave& wave= waves[0];
-
-	int n= wave.n;
-	int l= wave.l;
-	int m= wave.m;
-	assert(n > 0);
-	if (l > n - 1)
-		l= n - 1;
-	if (m > l)
-		m= l;
 
 	double bohr_radius= std::exp(scale*0.25) - 0.99999;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
-	StackString<1024> hydrogen_amplitude= {}; // Real multiplier
-	StackString<64> hydrogen_phase= {}; // Complex phase
-	{
+	StackString<1024> hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
+	StackString<64> hydrogen_phases[Program_maxWaves]= {}; // Complex phase
+	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
+		const Program::Wave& wave= waves[wave_i];
+		StackString<1024>& hydrogen_amplitude= hydrogen_amplitudes[wave_i];
+		StackString<64>& hydrogen_phase= hydrogen_phases[wave_i];
+		float amplitude_adjust= wave.amplitude;
+		int n= wave.n;
+		int l= wave.l;
+		int m= wave.m;
+		assert(n > 0 && l >= 0);
+		if (l > n - 1)
+			l= n - 1;
+		if (m > 0 && m > l)
+			m= l;
+		if (m < 0 && m < -l)
+			m= -l;
+
 		// Form a hydrogen wave function |nlm> in four parts
 		// psi_nlm(r, theta, phi) = C*E*L*Y, where
 		//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
 		//   E = e^(-rho/l)*rho^l
 		//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
-		//   Y = Spherical harmonic function Y(l, m, theta, phi)
+		//   Y = Spherical harmonic function Y(l, m, theta, phi) (phase is separated to different string)
 		//   rho = 2r/(n*a_0)
 		const std::size_t rho_str_size= 16;
 		char rho_str[rho_str_size];
 		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
 
 		// C
-		append(hydrogen_amplitude, "%e",
+		append(hydrogen_amplitude, "%e*%e",
 			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
-						fact(n - l - 1)/(2*n*fact(n + l))));
+						fact(n - l - 1)/(2*n*fact(n + l))),
+			amplitude_adjust);
 		append(hydrogen_amplitude, "*");
 
 		// E
@@ -175,8 +182,8 @@ VolumeShader createVolumeShader(
 			if (m != 0)
 				append(hydrogen_amplitude,
 					"%s*pow(abs(sin_theta), %i.0)*",
-					(m % 2 ? "sign(sin_theta)" : "1.0"),
-					m);
+					(std::abs(m) % 2 ? "sign(sin_theta)" : "1.0"),
+					std::abs(m));
 			append(hydrogen_amplitude, "(");
 
 			double spherical_coeff[poly_term_count]= {};
@@ -186,7 +193,7 @@ VolumeShader createVolumeShader(
 				if (spherical_coeff[i] == 0.0)
 					continue;
 
-				append(hydrogen_amplitude, "+%e", spherical_coeff[i]);
+				append(hydrogen_amplitude, "+(%e)", spherical_coeff[i]);
 				if (i != 0)
 					append(hydrogen_amplitude,
 						"*%s*pow(abs(cos_theta), %i.0)",
@@ -195,10 +202,10 @@ VolumeShader createVolumeShader(
 			}
 			append(hydrogen_amplitude, ")");
 
-			append(hydrogen_phase, "%i.0*phi + %f", m, wave.phase);
+			append(hydrogen_phase, "%i.0*phi + (%e)", m, wave.phase);
 		}
 
-		std::printf("Wave function:\n%s\n", hydrogen_amplitude.str);
+		//std::printf("Wave function:\n%s\n", hydrogen_amplitude.str);
 	}
 
 	const GLchar* vs_src=
@@ -238,15 +245,15 @@ VolumeShader createVolumeShader(
 		"		float cos_theta= cart_p.z/r;"
 		"		float theta= acos(cos_theta);"
 		"		float sin_theta= sin(theta);"
-		"		float psi_amplitude= 3.54321*WAVEFUC_AMPLITUDE(r, theta, phi, cos_theta, sin_theta);" // Can be negative
-		"		float psi_phase= WAVEFUNC_PHASE(phi);" // Not taking account possible negative amplitude
-		"		float psi_real= psi_amplitude*cos(psi_phase);"
-		"		float psi_imag= psi_amplitude*sin(psi_phase);"
-		"		float psi_complex_phase= atan(psi_imag, psi_real);"
-		"		float P= psi_amplitude*psi_amplitude;"
+		"		float total_real= 0;"
+		"		float total_imag= 0;"
+		"		CALC_TOTAL_WAVEFUNC;"
+		"		float total_amplitude= total_real*total_real + total_imag*total_imag;"
+		"		float total_complex_phase= atan(total_imag, total_real);"
+		"		float P= total_amplitude*total_amplitude;"
 		"		if (P < CUTOFF) P= 0;"
 		"\n#if COMPLEX_COLOR == 1\n"
-		"		vec3 emission= P*normalize(vec3(0.5 - 0.5*cos(psi_complex_phase), 0.2, 0.5 + 0.5*sin(psi_complex_phase)));"
+		"		vec3 emission= P*normalize(vec3(0.5 - 0.5*cos(total_complex_phase), 0.2, 0.5 + 0.5*sin(total_complex_phase)));"
 		"\n#else\n"
 		"		vec3 emission= P*color;"
 		"\n#endif\n"
@@ -260,21 +267,32 @@ VolumeShader createVolumeShader(
 		"}"
 		"\n";
 
+	StackString<1024> calc_total_wavefunc_define= {};
+	append(calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
+	for (int i= 0; i < (int)wave_count; ++i) {
+		if (waves[i].amplitude <= 0.001)
+			continue;
+		append(calc_total_wavefunc_define,
+			"float a_%i= 2.3456*(%s);" // Can be negative
+			"float p_%i= (%s);" // Not taking account possible negative amplitude
+			"total_real += a_%i*cos(p_%i);"
+			"total_imag += a_%i*sin(p_%i);",
+			i, hydrogen_amplitudes[i].str, i, hydrogen_phases[i].str, i, i, i, i, i);
+	}
+
 	StackString<1024*4> buf= {};
 	append(buf,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
-		"#define WAVEFUC_AMPLITUDE(r, theta, phi, cos_theta, sin_theta) (%s)\n"
-		"#define WAVEFUNC_PHASE(phi) (%s)\n"
 		"#define COMPLEX_COLOR %i\n"
 		"#define ABSORPTION_MUL %e\n"
-		"#define CUTOFF %f\n",
+		"#define CUTOFF %e\n"
+		"%s\n",
 		sample_count,
-		hydrogen_amplitude.str,
-		hydrogen_phase.str,
 		complex_color,
 		absorption,
-		cutoff);
+		cutoff,
+		calc_total_wavefunc_define.str);
 	const GLchar* fs_src[]= { buf.str, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
 
@@ -321,12 +339,16 @@ void addWave(Program& prog)
 {
 	Program::Wave w= {};
 	w.n= 1;
+	if (prog.waves.size == 0)
+		w.amplitude= 0.5;
 	push(prog.waves, w);
 
-	Slider phase= { "Complex phase", 0.0, tau, &last(prog.waves).phase, 3, true };
-	Slider n= { "n", 1, 20, &last(prog.waves).n, 0, true };
-	Slider l= { "l", 0, 20, &last(prog.waves).l, 0, true };
-	Slider m= { "m", 0, 20, &last(prog.waves).m, 0, true };
+	Slider amplitude= { "Amplitude", 0.0, 1.0, &last(prog.waves).amplitude, 3, true };
+	Slider phase= { "Complex phase", 0.0, (float)tau, &last(prog.waves).phase, 3, true };
+	Slider n= { "n", 1, 15, &last(prog.waves).n, 0, true };
+	Slider l= { "l", 0, 14, &last(prog.waves).l, 0, true };
+	Slider m= { "m", -14, 14, &last(prog.waves).m, 0, true };
+	push(prog.sliders, amplitude);
 	push(prog.sliders, phase);
 	push(prog.sliders, n);
 	push(prog.sliders, l);
@@ -457,6 +479,7 @@ void init(Env& env, Program& prog)
 		for (std::size_t i= 0; i < default_slider_count; ++i)
 			push(prog.sliders, default_sliders[i]);
 
+		addWave(prog);
 		addWave(prog);
 
 		prog.shader=

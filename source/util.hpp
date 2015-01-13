@@ -158,11 +158,20 @@ void differentiate(double* coeff, int coeff_size, int diff_count)
 }
 
 /// Coefficients for cosines in spherical harmonics
+/// Embeds plus or minus from the front of Y to the coefficients depending on m
 /// @param cos_coeff should be size of l + 1
 inline
 void sphericalHarmonics(double* cos_coeff, int l, int m)
 {
-	assert(l >= 0 && m >= 0);
+	assert(l >= 0);
+
+	int m_sign; 
+	if (m >= 0)
+		m_sign= m % 2 ? -1 : 1;
+	else
+		m_sign= 1;
+	m= std::abs(m);
+
 	// Calculate coefficients for associated legendre polynomials
 	// P_lm(cos(theta)) = (-1)^m * sin(theta)^m * D^m P_l(cos(theta))
 	legendre(cos_coeff, l);
@@ -170,7 +179,7 @@ void sphericalHarmonics(double* cos_coeff, int l, int m)
 	double normalization= 
 		std::sqrt( (2*l + 1.0)/(4*pi)*fact(l - m)/fact(l + m) );
 	for (int i= 0; i <= l; ++i)
-		cos_coeff[i] *= (m % 2 ? -1 : 1)*normalization;
+		cos_coeff[i] *= m_sign*normalization;
 }
 
 inline
