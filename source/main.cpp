@@ -267,7 +267,7 @@ VolumeShader createVolumeShader(
 		"}"
 		"\n";
 
-	StackString<1024> calc_total_wavefunc_define= {};
+	StackString<1024*Program_maxWaves> calc_total_wavefunc_define= {};
 	append(calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
 	for (int i= 0; i < (int)wave_count; ++i) {
 		if (waves[i].amplitude <= 0.001)
@@ -280,7 +280,7 @@ VolumeShader createVolumeShader(
 			i, hydrogen_amplitudes[i].str, i, hydrogen_phases[i].str, i, i, i, i, i);
 	}
 
-	StackString<1024*4> buf= {};
+	StackString<1024*Program_maxWaves + 256> buf= {};
 	append(buf,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
