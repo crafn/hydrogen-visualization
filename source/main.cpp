@@ -8,6 +8,8 @@
 #include "env.hpp"
 #include "fontdata.hpp"
 #include "gl.hpp"
+#include "math.hpp"
+#include "util.hpp"
 
 #define local_persist static
 
@@ -120,12 +122,15 @@ VolumeShader createVolumeShader(
 	double bohr_radius= std::exp(scale*0.25) - 0.99999;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
-	StackString<1024> hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
-	StackString<64> hydrogen_phases[Program_maxWaves]= {}; // Complex phase
+	String hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
+	String hydrogen_phases[Program_maxWaves]= {}; // Complex phase
 	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
+		hydrogen_amplitudes[wave_i]= createString();
+		hydrogen_phases[wave_i]= createString();
+
 		const Program::Wave& wave= waves[wave_i];
-		StackString<1024>& hydrogen_amplitude= hydrogen_amplitudes[wave_i];
-		StackString<64>& hydrogen_phase= hydrogen_phases[wave_i];
+		String& hydrogen_amplitude= hydrogen_amplitudes[wave_i];
+		String& hydrogen_phase= hydrogen_phases[wave_i];
 		float amplitude_adjust= wave.amplitude;
 		int n= wave.n;
 		int l= wave.l;
@@ -267,7 +272,7 @@ VolumeShader createVolumeShader(
 		"}"
 		"\n";
 
-	StackString<1024*Program_maxWaves> calc_total_wavefunc_define= {};
+	String calc_total_wavefunc_define= createString();
 	append(calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
 	for (int i= 0; i < (int)wave_count; ++i) {
 		if (waves[i].amplitude <= 0.001)
@@ -280,7 +285,7 @@ VolumeShader createVolumeShader(
 			i, hydrogen_amplitudes[i].str, i, hydrogen_phases[i].str, i, i, i, i, i);
 	}
 
-	StackString<1024*Program_maxWaves + 256> buf= {};
+	String buf= createString();
 	append(buf,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
@@ -302,6 +307,13 @@ VolumeShader createVolumeShader(
 	shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
 	shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
 	shd.transformLoc= glGetUniformLocation(shd.prog, "u_transform");
+
+	destroyString(buf);
+	destroyString(calc_total_wavefunc_define);
+	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
+		destroyString(hydrogen_amplitudes[wave_i]);
+		destroyString(hydrogen_phases[wave_i]);
+	}
 	return shd;
 }
 
