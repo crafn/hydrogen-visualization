@@ -50,6 +50,7 @@ struct VolumeShader {
 	GLint phaseLoc;
 	GLint colorLoc;
 	GLint transformLoc;
+	GLint rayLengthLoc;
 };
 
 struct VolumeFbo {
@@ -100,7 +101,7 @@ struct Program {
 	float complexColor; // bool
 	float absorption;
 	float cutoff;
-	float scale;
+	float distance;
 	StackArray<Wave, Program_maxWaves> waves;
 	StackArray<Slider, Program_maxSliders> sliders;
 };
@@ -110,7 +111,6 @@ VolumeShader createVolumeShader(
 		const bool complex_color,
 		const float absorption,
 		const float cutoff,
-		const float scale,
 		const Program::Wave* waves,
 		const std::size_t wave_count)
 {
@@ -119,7 +119,7 @@ VolumeShader createVolumeShader(
 
 	assert(wave_count > 0);
 
-	double bohr_radius= std::exp(scale*0.25) - 0.99999;
+	double bohr_radius= 1.0;
 	const int poly_term_count= 30;
 	// Formula for hydrogen wave function with parameters r, theta, and phi
 	String hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
@@ -144,7 +144,7 @@ VolumeShader createVolumeShader(
 			m= -l;
 
 		// Form a hydrogen wave function |nlm> in four parts
-		// psi_nlm(r, theta, phi) = C*E*L*Y, where
+		// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
 		//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
 		//   E = e^(-rho/l)*rho^l
 		//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
@@ -155,10 +155,12 @@ VolumeShader createVolumeShader(
 		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
 
 		// C
-		append(hydrogen_amplitude, "%e*%e",
+		append(hydrogen_amplitude, "%e*%e*%e",
 			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
 						fact(n - l - 1)/(2*n*fact(n + l))),
-			amplitude_adjust);
+			amplitude_adjust,
+			1.0 + 2.0*std::pow(n, 2.5) // Totally ad-hoc factor to keep the brightness at somewhat const level
+			);
 		append(hydrogen_amplitude, "*");
 
 		// E
@@ -220,19 +222,23 @@ VolumeShader createVolumeShader(
 		"uniform mat4 u_transform;"
 		"varying vec3 v_pos;"
 		"varying vec3 v_normal;"
+		"varying vec2 v_uv;"
 		"void main()"
 		"{"
 		"	gl_Position= vec4(a_pos, 0.0, 1.0);"
-		"	v_pos= (u_transform*vec4(a_pos, 0.0, 1.0)).xyz;"
+		"	v_pos= (u_transform*vec4(0.0, 0.0, 0.0, 1.0)).xyz;"
 		"	v_normal= mat3(u_transform)*vec3(a_pos, -1.0);"
+		"	v_uv= a_uv;"
 		"}"
 		"\n";
 	const GLchar* fs_template_src=
 		"uniform float u_phase;"
 		"uniform float u_time;"
+		"uniform float u_rayLength;"
 		"uniform vec3 u_color;"
 		"varying vec3 v_pos;"
 		"varying vec3 v_normal;"
+		"varying vec2 v_uv;"
 		"float rand(vec2 co){"
 		"    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453);"
 		"}"
@@ -242,9 +248,10 @@ VolumeShader createVolumeShader(
 		"	vec3 color= u_color;"
 		"	vec3 intensity= vec3(0.0, 0.0, 0.0);"
 		"	float last_P= 0.0;"
-		"	const float dl= 2.0/SAMPLE_COUNT;"
+		"	float dl= u_rayLength/SAMPLE_COUNT;"
 		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
-		"		vec3 cart_p= v_pos + n*2.0*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
+		"		float dist= u_rayLength*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
+		"		vec3 cart_p= v_pos + n*dist;"
 		"		float r= sqrt(dot(cart_p, cart_p));"
 		"		float phi= atan(cart_p.y, cart_p.x);"
 		"		float cos_theta= cart_p.z/r;"
@@ -263,11 +270,11 @@ VolumeShader createVolumeShader(
 		"		vec3 emission= P*color;"
 		"\n#endif\n"
 		"		float absorption= P*ABSORPTION_MUL;"
-		"		intensity=	intensity + (emission - absorption*intensity)*dl/2.0;"
+		"		intensity=	intensity + (emission - absorption*intensity)*dl;"
 		"		intensity= max(vec3(0.0, 0.0, 0.0), intensity);"
 		"		last_P= P;"
 		"	}"
-		"	intensity += vec3(1.0, 1.0, 1.0)*rand(v_pos.xy*u_time)*0.015;"
+		"	intensity += vec3(1.0, 1.0, 1.0)*rand(v_uv.xy*u_time)*0.015;"
 		"	gl_FragColor= vec4(intensity, 1.0);"
 		"}"
 		"\n";
@@ -278,7 +285,7 @@ VolumeShader createVolumeShader(
 		if (waves[i].amplitude <= 0.001)
 			continue;
 		append(calc_total_wavefunc_define,
-			"float a_%i= 2.3456*(%s);" // Can be negative
+			"float a_%i= (%s);" // Can be negative
 			"float p_%i= (%s);" // Not taking account possible negative amplitude
 			"total_real += a_%i*cos(p_%i);"
 			"total_imag += a_%i*sin(p_%i);",
@@ -307,6 +314,7 @@ VolumeShader createVolumeShader(
 	shd.phaseLoc= glGetUniformLocation(shd.prog, "u_phase");
 	shd.colorLoc= glGetUniformLocation(shd.prog, "u_color");
 	shd.transformLoc= glGetUniformLocation(shd.prog, "u_transform");
+	shd.rayLengthLoc= glGetUniformLocation(shd.prog, "u_rayLength");
 
 	destroyString(buf);
 	destroyString(calc_total_wavefunc_define);
@@ -352,27 +360,19 @@ void addWave(Program& prog)
 	Program::Wave w= {};
 	w.n= 1;
 	if (prog.waves.size == 0)
-		w.amplitude= 0.5;
+		w.amplitude= 1.0;
 	push(prog.waves, w);
 
-	Slider amplitude= { "Amplitude", 0.0, 1.0, &last(prog.waves).amplitude, 3, true };
+	Slider amplitude= { "Amplitude", 0.0, 2.0, &last(prog.waves).amplitude, 3, true };
 	Slider phase= { "Complex phase", 0.0, (float)tau, &last(prog.waves).phase, 3, true };
-	Slider n= { "n", 1, 15, &last(prog.waves).n, 0, true };
-	Slider l= { "l", 0, 14, &last(prog.waves).l, 0, true };
-	Slider m= { "m", -14, 14, &last(prog.waves).m, 0, true };
+	Slider n= { "n", 1, 12, &last(prog.waves).n, 0, true };
+	Slider l= { "l", 0, 11, &last(prog.waves).l, 0, true };
+	Slider m= { "m", -11, 11, &last(prog.waves).m, 0, true };
 	push(prog.sliders, amplitude);
 	push(prog.sliders, phase);
 	push(prog.sliders, n);
 	push(prog.sliders, l);
 	push(prog.sliders, m);
-}
-
-void removeWave(Program& prog)
-{
-	pop(prog.waves);
-	pop(prog.sliders); // n
-	pop(prog.sliders); // l
-	pop(prog.sliders); // m
 }
 
 void init(Env& env, Program& prog)
@@ -472,7 +472,7 @@ void init(Env& env, Program& prog)
 		prog.complexColor= 0.0;
 		prog.absorption= 0.0;
 		prog.cutoff= 0.0;
-		prog.scale= 0.5;
+		prog.distance= 2.0;
 
 		Slider default_sliders[] = {
 			{ "Time",			0.0,	5.0,	&prog.phase,			3, false },
@@ -484,8 +484,8 @@ void init(Env& env, Program& prog)
 			{ "B",				0.0,	2.0,	&prog.b,				3, false },
 			{ "Complex color",	0,		1,		&prog.complexColor,		0, true },
 			{ "Absorption",		0.0,	1.0,	&prog.absorption,		3, true },
-			{ "Cutoff",			0.0,	3.0,	&prog.cutoff,			3, true },
-			{ "Scale",			0.001,	1.0,	&prog.scale,			3, true },
+			{ "Cutoff",			0.0,	0.15,	&prog.cutoff,			4, true },
+			{ "Distance",		0.2,	150.0,	&prog.distance,			4, false },
 		};
 		const std::size_t default_slider_count= sizeof(default_sliders)/sizeof(*default_sliders);
 		for (std::size_t i= 0; i < default_slider_count; ++i)
@@ -500,7 +500,6 @@ void init(Env& env, Program& prog)
 				prog.complexColor,
 				prog.absorption,
 				prog.cutoff,
-				prog.scale, 
 				prog.waves.data, prog.waves.size);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
@@ -582,7 +581,6 @@ void frame(const Env& env, Program& prog)
 							prog.complexColor,
 							prog.absorption,
 							prog.cutoff,
-							prog.scale, 
 							prog.waves.data, prog.waves.size);
 				}
 			} else {
@@ -611,7 +609,7 @@ void frame(const Env& env, Program& prog)
 						*slider.value);
 	}
 
-	{ // Adjust FBO
+	{ // Adjust FBO to resolution and filtering settings
 		Vec2i volume_reso= cast<Vec2i>(cast<Vec2f>(env.winSize)*prog.resoMul);
 		bool volume_filtering= prog.filtering > 0.5;
 		if (volume_reso != prog.fbo.reso || volume_filtering != prog.fbo.filtering) {
@@ -629,12 +627,13 @@ void frame(const Env& env, Program& prog)
 
 		float s1= sin(rot.x), s2= sin(rot.y);
 		float c1= cos(rot.x), c2= cos(rot.y);
+		float r= prog.distance;
 		// Turntable-style rotation
 		float transform[16]= {
 			c1,			0,		s1,		0,
 			-s1*s2,		c2,		c1*s2,	0,
 			-c2*s1,		-s2,	c2*c1,	0,
-			-c2*s1,		-s2,	c2*c1,	1 // Translation around origin
+			-c2*s1*r,	-s2*r,	c2*c1*r,1 // Translation around origin
 		};
 
 		VolumeShader& shd= prog.shader;
@@ -642,6 +641,7 @@ void frame(const Env& env, Program& prog)
 		glUniform1f(shd.timeLoc, prog.time);
 		glUniform1f(shd.phaseLoc, prog.phase);
 		glUniform3f(shd.colorLoc, prog.r, prog.g, prog.b);
+		glUniform1f(shd.rayLengthLoc, prog.distance*2.0);
 		glUniformMatrix4fv(shd.transformLoc, 1, GL_FALSE, transform);
 		drawRect(Vec2f(-1, -1), Vec2f(1, 1));
 
