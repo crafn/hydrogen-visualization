@@ -92,20 +92,21 @@ void destroyString(String& s)
 }
 
 inline
-void append(String& s, const char* format, ...)
+void append(String* s, const char* format, ...)
 {
-	assert(s.str);
+	assert(s);
+	assert(s->str);
 
 	va_list args;
 	va_list args2;
 	va_start(args, format);
 	va_copy(args2, args);
 
-	std::size_t new_len= s.length + std::vsnprintf(NULL, 0, format, args);
-	s.str= (char*)std::realloc((void*)s.str, new_len + 1);
-	assert(s.str);
-	std::vsnprintf(s.str + s.length, new_len + 1, format, args2);
-	s.length= new_len;
+	std::size_t new_len= s->length + std::vsnprintf(NULL, 0, format, args);
+	s->str= (char*)std::realloc((void*)s->str, new_len + 1);
+	assert(s->str);
+	std::vsnprintf(s->str + s->length, new_len + 1, format, args2);
+	s->length= new_len;
 
 	va_end(args);
 }

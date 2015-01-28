@@ -87,11 +87,15 @@ struct Program {
 	QuadVbo vbo;
 	float time;
 
-	// Slider settings
+	/// Slider settings
 	struct Wave {
 		float amplitude;
-		float phase; // Additional factor: e^(i*phase)
-		float n, l, m; // Quantum numbers
+		float phase; /// Additional factor: e^(i*phase)
+		float n, l, m; /// Quantum numbers
+		float translation;
+		/// Two waves with the same `particle`form a superposition state
+		/// Two waves with differing `particle` form a molecule
+		int particle;
 	};
 	float phase;
 	float sampleCount;
@@ -106,6 +110,93 @@ struct Program {
 	StackArray<Slider, Program_maxSliders> sliders;
 };
 
+/// Formula for hydrogen wave function with parameters r, theta, and phi
+void hydrogenWaveFuncStr(int n, int l, int m, float phase, String* amplitude, String* phase_str)
+{
+	assert(amplitude->str && phase_str->str);
+
+	double bohr_radius= 1.0;
+	const int poly_term_count= 30;
+
+	assert(n > 0 && l >= 0);
+	if (l > n - 1)
+		l= n - 1;
+	if (m > 0 && m > l)
+		m= l;
+	if (m < 0 && m < -l)
+		m= -l;
+
+	// Form a hydrogen wave function |nlm> in four parts
+	// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
+	//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
+	//   E = e^(-rho/l)*rho^l
+	//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
+	//   Y = Spherical harmonic function Y(l, m, theta, phi) (phase is separated to different string)
+	//   rho = 2r/(n*a_0)
+	const std::size_t rho_str_size= 16;
+	char rho_str[rho_str_size];
+	std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
+
+	// C
+	append(amplitude, "%e*%e",
+		std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
+					fact(n - l - 1)/(2*n*fact(n + l))),
+		1.0 + 2.0*std::pow(n, 2.5) // Totally ad-hoc factor to keep the brightness at somewhat const level
+		);
+	append(amplitude, "*");
+
+	// E
+	append(amplitude, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+	append(amplitude, "*");
+
+	{ // L
+		append(amplitude, "(");
+		double laguerre_coeff[poly_term_count]= {};
+		assert(n - l < poly_term_count);
+
+		laguerre(laguerre_coeff, n - l - 1, 2*l + 1);
+		for (int i= 0; i < poly_term_count; ++i) {
+			if (laguerre_coeff[i] == 0.0)
+				continue;
+
+			append(amplitude, "+%e", laguerre_coeff[i]);
+			if (i != 0)
+				append(amplitude, "*pow(%s, %i.0)", rho_str, i);
+		}
+		append(amplitude, ")");
+	}
+	append(amplitude, "*");
+
+	{ // Y
+		if (m != 0)
+			append(amplitude,
+				"%s*pow(abs(sin_theta), %i.0)*",
+				(std::abs(m) % 2 ? "sign(sin_theta)" : "1.0"),
+				std::abs(m));
+		append(amplitude, "(");
+
+		double spherical_coeff[poly_term_count]= {};
+		assert(l - 1 < poly_term_count);
+		sphericalHarmonics(spherical_coeff, l, m);
+		for (int i= 0; i < poly_term_count; ++i) {
+			if (spherical_coeff[i] == 0.0)
+				continue;
+
+			append(amplitude, "+(%e)", spherical_coeff[i]);
+			if (i != 0)
+				append(amplitude,
+					"*%s*pow(abs(cos_theta), %i.0)",
+					(i % 2 ? "sign(cos_theta)" : "1.0"),
+					i);
+		}
+		append(amplitude, ")");
+
+		append(phase_str, "%i.0*phi + (%e)", m, phase);
+	}
+
+	//std::printf("Wave function:\n%s\n", amplitude.str);
+}
+
 VolumeShader createVolumeShader(
 		const int sample_count,
 		const bool complex_color,
@@ -119,100 +210,18 @@ VolumeShader createVolumeShader(
 
 	assert(wave_count > 0);
 
-	double bohr_radius= 1.0;
-	const int poly_term_count= 30;
-	// Formula for hydrogen wave function with parameters r, theta, and phi
 	String hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
 	String hydrogen_phases[Program_maxWaves]= {}; // Complex phase
 	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
 		hydrogen_amplitudes[wave_i]= createString();
 		hydrogen_phases[wave_i]= createString();
-
-		const Program::Wave& wave= waves[wave_i];
-		String& hydrogen_amplitude= hydrogen_amplitudes[wave_i];
-		String& hydrogen_phase= hydrogen_phases[wave_i];
-		float amplitude_adjust= wave.amplitude;
-		int n= wave.n;
-		int l= wave.l;
-		int m= wave.m;
-		assert(n > 0 && l >= 0);
-		if (l > n - 1)
-			l= n - 1;
-		if (m > 0 && m > l)
-			m= l;
-		if (m < 0 && m < -l)
-			m= -l;
-
-		// Form a hydrogen wave function |nlm> in four parts
-		// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
-		//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
-		//   E = e^(-rho/l)*rho^l
-		//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
-		//   Y = Spherical harmonic function Y(l, m, theta, phi) (phase is separated to different string)
-		//   rho = 2r/(n*a_0)
-		const std::size_t rho_str_size= 16;
-		char rho_str[rho_str_size];
-		std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
-
-		// C
-		append(hydrogen_amplitude, "%e*%e*%e",
-			std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
-						fact(n - l - 1)/(2*n*fact(n + l))),
-			amplitude_adjust,
-			1.0 + 2.0*std::pow(n, 2.5) // Totally ad-hoc factor to keep the brightness at somewhat const level
-			);
-		append(hydrogen_amplitude, "*");
-
-		// E
-		append(hydrogen_amplitude, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
-		append(hydrogen_amplitude, "*");
-
-		{ // L
-			append(hydrogen_amplitude, "(");
-			double laguerre_coeff[poly_term_count]= {};
-			assert(n - l < poly_term_count);
-
-			laguerre(laguerre_coeff, n - l - 1, 2*l + 1);
-			for (int i= 0; i < poly_term_count; ++i) {
-				if (laguerre_coeff[i] == 0.0)
-					continue;
-
-				append(hydrogen_amplitude, "+%e", laguerre_coeff[i]);
-				if (i != 0)
-					append(hydrogen_amplitude, "*pow(%s, %i.0)", rho_str, i);
-			}
-			append(hydrogen_amplitude, ")");
-		}
-		append(hydrogen_amplitude, "*");
-
-		{ // Y
-			if (m != 0)
-				append(hydrogen_amplitude,
-					"%s*pow(abs(sin_theta), %i.0)*",
-					(std::abs(m) % 2 ? "sign(sin_theta)" : "1.0"),
-					std::abs(m));
-			append(hydrogen_amplitude, "(");
-
-			double spherical_coeff[poly_term_count]= {};
-			assert(l - 1 < poly_term_count);
-			sphericalHarmonics(spherical_coeff, l, m);
-			for (int i= 0; i < poly_term_count; ++i) {
-				if (spherical_coeff[i] == 0.0)
-					continue;
-
-				append(hydrogen_amplitude, "+(%e)", spherical_coeff[i]);
-				if (i != 0)
-					append(hydrogen_amplitude,
-						"*%s*pow(abs(cos_theta), %i.0)",
-						(i % 2 ? "sign(cos_theta)" : "1.0"),
-						i);
-			}
-			append(hydrogen_amplitude, ")");
-
-			append(hydrogen_phase, "%i.0*phi + (%e)", m, wave.phase);
-		}
-
-		//std::printf("Wave function:\n%s\n", hydrogen_amplitude.str);
+		hydrogenWaveFuncStr(
+				waves[wave_i].n,
+				waves[wave_i].l,
+				waves[wave_i].m,
+				waves[wave_i].phase,
+				&hydrogen_amplitudes[wave_i],
+				&hydrogen_phases[wave_i]);
 	}
 
 	const GLchar* vs_src=
@@ -248,7 +257,7 @@ VolumeShader createVolumeShader(
 		"	if (abs(x) > abs(y))" /// @todo Remove branch
 		"		return atan(y, x);"
 		"	else"
-		"		return 3.1415927/2 - atan(x, y);"
+		"		return 3.1415927/2.0 - atan(x, y);"
 		"}"
 		"void main()"
 		"{"
@@ -259,12 +268,8 @@ VolumeShader createVolumeShader(
 		"	float dl= u_rayLength/SAMPLE_COUNT;"
 		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
 		"		float dist= u_rayLength*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
-		"		vec3 cart_p= v_pos + n*dist;"
-		"		float r= sqrt(dot(cart_p, cart_p));"
-		"		float phi= atan2(cart_p.y, cart_p.x);"
-		"		float cos_theta= cart_p.z/r;"
-		"		float theta= acos(cos_theta);"
-		"		float sin_theta= sin(theta);"
+		"		vec3 cart_p;"
+		"		float r, phi, cos_theta, theta, sin_theta;"
 		"		float total_real= 0;"
 		"		float total_imag= 0;"
 		"		CALC_TOTAL_WAVEFUNC;"
@@ -278,7 +283,7 @@ VolumeShader createVolumeShader(
 		"		vec3 emission= P*color;"
 		"\n#endif\n"
 		"		float absorption= P*ABSORPTION_MUL;"
-		"		intensity=	intensity + (emission - absorption*intensity)*dl;"
+		"		intensity=	intensity + (emission - intensity*absorption)*dl;"
 		"		intensity= max(vec3(0.0, 0.0, 0.0), intensity);"
 		"		last_P= P;"
 		"	}"
@@ -288,20 +293,30 @@ VolumeShader createVolumeShader(
 		"\n";
 
 	String calc_total_wavefunc_define= createString();
-	append(calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
+	append(&calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
 	for (int i= 0; i < (int)wave_count; ++i) {
 		if (waves[i].amplitude <= 0.001)
 			continue;
-		append(calc_total_wavefunc_define,
+		append(&calc_total_wavefunc_define,
+			"cart_p= v_pos + n*dist + vec3(0.0, 0.0, %e);"
+			"r= sqrt(dot(cart_p, cart_p));"
+			"phi= atan2(cart_p.y, cart_p.x);"
+			"cos_theta= cart_p.z/r;"
+			"theta= acos(cos_theta);"
+			"sin_theta= sin(theta);"
 			"float a_%i= (%s);" // Can be negative
 			"float p_%i= (%s);" // Not taking account possible negative amplitude
-			"total_real += a_%i*cos(p_%i);"
+			"total_real += a_%i*cos(p_%i)*%e;"
 			"total_imag += a_%i*sin(p_%i);",
-			i, hydrogen_amplitudes[i].str, i, hydrogen_phases[i].str, i, i, i, i, i);
+			waves[i].translation,
+			i, hydrogen_amplitudes[i].str,
+			i, hydrogen_phases[i].str,
+			i, i, waves[i].amplitude,
+			i, i);
 	}
 
 	String buf= createString();
-	append(buf,
+	append(&buf,
 		"#version 120\n"
 		"#define SAMPLE_COUNT %i\n"
 		"#define COMPLEX_COLOR %i\n"
@@ -376,11 +391,13 @@ void addWave(Program& prog)
 	Slider n= { "n", 1, 12, &last(prog.waves).n, 0, true };
 	Slider l= { "l", 0, 11, &last(prog.waves).l, 0, true };
 	Slider m= { "m", -11, 11, &last(prog.waves).m, 0, true };
+	Slider translation= { "translation", -5.0, 5.0, &last(prog.waves).translation, 3, true };
 	push(prog.sliders, amplitude);
 	push(prog.sliders, phase);
 	push(prog.sliders, n);
 	push(prog.sliders, l);
 	push(prog.sliders, m);
+	push(prog.sliders, translation);
 }
 
 void init(Env& env, Program& prog)
