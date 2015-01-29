@@ -395,12 +395,12 @@ VolumeShader createVolumeShader(
 			"float a_%i= (%s);" // Can be negative
 			"float p_%i= (%s);" // Not taking account possible negative amplitude
 			"total_real += a_%i*cos(p_%i)*%e;"
-			"total_imag += a_%i*sin(p_%i);",
+			"total_imag += a_%i*sin(p_%i)*%e;",
 			waves[i].translation,
 			i, hydrogen_amplitudes[i].str,
 			i, hydrogen_phases[i].str,
 			i, i, waves[i].amplitude,
-			i, i);
+			i, i, waves[i].amplitude);
 	}
 
 	String buf= createString();
