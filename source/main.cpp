@@ -319,7 +319,8 @@ VolumeShader createVolumeShader(
 				waves[0].l,
 				waves[0].m,
 				waves[0].phase);
-		Complex I= interferenceIntegral(&wf, &wf, 100.0);
+		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
+		Complex I= interferenceIntegral(&wf, &wf, max_r);
 		std::printf("<psi|psi>: %f, %f\n", I.a, I.b);
 	}
 
