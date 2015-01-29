@@ -34,6 +34,9 @@
 #	include <time.h>
 #	include <X11/X.h>
 #	include <X11/Xlib.h>
+#	ifdef Complex
+#		undef Complex
+#	endif
 #elif PLATFORM == PLATFORM_WINDOWS
 #	include <Windows.h>
 #elif PLATFORM == PLATFORM_SDL

@@ -110,13 +110,120 @@ struct Program {
 	StackArray<Slider, Program_maxSliders> sliders;
 };
 
+/// Coefficients for hydrogen wave function calculation
+const std::size_t maxHPolyTermCount= 30;
+struct HWaveFunc {
+	// Hydrogen wave function |nlm> in four parts
+	// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
+	//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
+	//   E = e^(-rho/l)*rho^l
+	//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
+	//   Y = Spherical harmonic function Y(l, m, theta, phi)
+	//   rho = 2r/(n*a_0)
+	double normalization; // C
+	double laguerreCoeff[maxHPolyTermCount]; // Coefficients for rho^n in L(rho)
+	double spheCoeff[maxHPolyTermCount]; // Coefficients for cos(theta)^n in Y(theta) (missing complex phase ofc)
+	double phase; // Addition to complex phase in Y
+	int n;
+	int l;
+	int m;
+	double a0; // Bohr radius
+};
+
+HWaveFunc createHWaveFunc(int n, int l, int m, double phase, double bohr_radius)
+{
+	assert(n > 0 && l >= 0);
+	assert(std::abs(n) > std::abs(l));
+	assert(std::abs(l) >= std::abs(m));
+
+	HWaveFunc w= {};
+	w.n= n;
+	w.l= l;
+	w.m= m;
+	w.phase= phase;
+	w.a0= bohr_radius;
+	w.normalization= std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
+								fact(n - l - 1)/(2*n*fact(n + l)));
+
+	assert(n - l < (int)maxHPolyTermCount);
+	laguerre(w.laguerreCoeff, n - l - 1, 2*l + 1);
+
+	assert(l - 1 < (int)maxHPolyTermCount);
+	sphericalHarmonics(w.spheCoeff, l, m);
+
+	return w;
+}
+
+Complex value(const HWaveFunc* w, double r, double theta, double phi)
+{
+	const double a_0= 1.0;
+	const double rho= 2*r/(w->n*a_0);
+	double amplitude= 0.0;
+	double phase= 0.0;
+
+	// C
+	amplitude= w->normalization;
+
+	// E
+	amplitude *= std::exp(-rho/2.0)*std::pow(rho, w->l);
+
+	// L
+	{
+		double sum= 0.0;
+		for (std::size_t i= 0; i < maxHPolyTermCount; ++i)
+			sum += w->laguerreCoeff[i]*std::pow(rho, i);
+		amplitude *= sum;
+	}
+
+	// Y
+	{
+		double cos_theta= std::cos(theta);
+		double sum= 0.0;
+		for (std::size_t i= 0; i < maxHPolyTermCount; ++i)
+			sum += w->spheCoeff[i]*std::pow(cos_theta, i);
+		amplitude *= std::pow(std::sin(theta), w->m)*sum;
+		phase += w->m*phi + w->phase;
+	}
+
+	Complex result= {};
+	result.a= amplitude*std::cos(phase);
+	result.b= amplitude*std::sin(phase);
+	return result;
+}
+
+/// Integral dx^3 psi_1 * conj(psi_2)
+Complex interferenceIntegral(
+		int n1, int l1, int m1, double phase1,
+		int n2, int l2, int m2, double phase2,
+		double max_r)
+{
+	// Volume integral
+	Complex result= {};
+	double dphi= 0.1;
+	double dtheta= 0.1;
+	double dr= 0.1;
+	for (double phi= 0.0; phi < 2*pi; phi += dphi) {
+		for (double theta= -pi; theta < pi; theta += dtheta) {
+			for (double r= 0.0; r < max_r; r += dr) {
+
+/*				double value= 0.0;
+
+				double dV= r*r*std::sin(theta)*dr*dphi*dtheta;
+				result.a += value.a*dV;
+				result.b += value.b*dV;*/
+			}
+		}
+	}
+	return result;
+}
+
 /// Formula for hydrogen wave function with parameters r, theta, and phi
-void hydrogenWaveFuncStr(int n, int l, int m, float phase, String* amplitude, String* phase_str)
+void hydrogenWaveFuncStr(int n, int l, int m, double phase, String* amplitude, String* phase_str)
 {
 	assert(amplitude->str && phase_str->str);
 
 	double bohr_radius= 1.0;
-	const int poly_term_count= 30;
+	const int poly_term_count= maxHPolyTermCount;
 
 	assert(n > 0 && l >= 0);
 	if (l > n - 1)
@@ -129,9 +236,9 @@ void hydrogenWaveFuncStr(int n, int l, int m, float phase, String* amplitude, St
 	// Form a hydrogen wave function |nlm> in four parts
 	// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
 	//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
-	//   E = e^(-rho/l)*rho^l
+	//   E = e^(-rho/2)*rho^l
 	//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
-	//   Y = Spherical harmonic function Y(l, m, theta, phi) (phase is separated to different string)
+	//   Y = Spherical harmonic function Y(l, m, theta, phi) (complex phase is separated to different string)
 	//   rho = 2r/(n*a_0)
 	const std::size_t rho_str_size= 16;
 	char rho_str[rho_str_size];

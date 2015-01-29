@@ -42,6 +42,10 @@ typedef Vec2<int> Vec2i;
 template <typename T, typename U>
 T cast(Vec2<U> v) { return T((typename T::Value)v.x, (typename T::Value)v.y); }
 
+struct Complex {
+	float a, b;
+};
+
 inline
 Vec2f fitToGrid(Vec2f v, Vec2i reso)
 {
