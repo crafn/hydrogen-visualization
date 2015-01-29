@@ -110,8 +110,9 @@ struct Program {
 	StackArray<Slider, Program_maxSliders> sliders;
 };
 
-/// Coefficients for hydrogen wave function calculation
+/// Intermediate representation for hydrogen wave function calculation
 const std::size_t maxHPolyTermCount= 30;
+const double bohrRadius= 1.0;
 struct HWaveFunc {
 	// Hydrogen wave function |nlm> in four parts
 	// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
@@ -127,10 +128,9 @@ struct HWaveFunc {
 	int n;
 	int l;
 	int m;
-	double a0; // Bohr radius
 };
 
-HWaveFunc createHWaveFunc(int n, int l, int m, double phase, double bohr_radius)
+HWaveFunc createHWaveFunc(int n, int l, int m, double phase)
 {
 	assert(n > 0 && l >= 0);
 	if (l > n - 1)
@@ -145,8 +145,7 @@ HWaveFunc createHWaveFunc(int n, int l, int m, double phase, double bohr_radius)
 	w.l= l;
 	w.m= m;
 	w.phase= phase;
-	w.a0= bohr_radius;
-	w.normalization= std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
+	w.normalization= std::sqrt(	std::pow(2.0/(n*bohrRadius), 3)*
 								fact(n - l - 1)/(2*n*fact(n + l)));
 
 	assert(n - l < (int)maxHPolyTermCount);
@@ -158,10 +157,9 @@ HWaveFunc createHWaveFunc(int n, int l, int m, double phase, double bohr_radius)
 	return w;
 }
 
-Complex value(const HWaveFunc* w, double r, double theta, double phi)
+Complex value(const HWaveFunc* w, double r, double cos_theta, double sin_theta, double phi)
 {
-	const double a_0= 1.0;
-	const double rho= 2*r/(w->n*a_0);
+	const double rho= 2*r/(w->n*bohrRadius);
 	double amplitude= 0.0;
 	double phase= 0.0;
 
@@ -181,11 +179,10 @@ Complex value(const HWaveFunc* w, double r, double theta, double phi)
 
 	// Y
 	{
-		double cos_theta= std::cos(theta);
 		double sum= 0.0;
 		for (std::size_t i= 0; i < maxHPolyTermCount; ++i)
 			sum += w->spheCoeff[i]*std::pow(cos_theta, i);
-		amplitude *= std::pow(std::sin(theta), w->m)*sum;
+		amplitude *= std::pow(sin_theta, std::abs(w->m))*sum;
 		phase += w->m*phi + w->phase;
 	}
 
@@ -197,24 +194,27 @@ Complex value(const HWaveFunc* w, double r, double theta, double phi)
 
 /// Integral dx^3 psi_1 * conj(psi_2)
 Complex interferenceIntegral(
-		int n1, int l1, int m1, double phase1,
-		int n2, int l2, int m2, double phase2,
+		const HWaveFunc* psi_1,
+		const HWaveFunc* psi_2,
 		double max_r)
 {
 	// Volume integral
 	Complex result= {};
 	double dphi= 0.1;
 	double dtheta= 0.1;
-	double dr= 0.1;
-	for (double phi= 0.0; phi < 2*pi; phi += dphi) {
-		for (double theta= -pi; theta < pi; theta += dtheta) {
+	double dr= max_r/20.0;
+	for (double theta= -pi/2.0; theta < pi/2.0; theta += dtheta) {
+		double cos_theta= std::cos(theta);
+		double sin_theta= std::sin(theta);
+		for (double phi= 0.0; phi < 2.0*pi; phi += dphi) {
 			for (double r= 0.0; r < max_r; r += dr) {
+				Complex v1= value(psi_1, r, cos_theta, sin_theta, phi);
+				Complex v2= value(psi_2, r, cos_theta, sin_theta, phi);
+				Complex value= v1*conj(v2);
 
-/*				double value= 0.0;
-
-				double dV= r*r*std::sin(theta)*dr*dphi*dtheta;
+				double dV= r*r*cos_theta*dr*dphi*dtheta;
 				result.a += value.a*dV;
-				result.b += value.b*dV;*/
+				result.b += value.b*dV;
 			}
 		}
 	}
@@ -228,7 +228,7 @@ void hydrogenWaveFuncStr(const HWaveFunc* w, String* amplitude, String* phase_st
 
 	const std::size_t rho_str_size= 16;
 	char rho_str[rho_str_size];
-	std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/w->a0/w->n);
+	std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohrRadius/w->n);
 
 	// C
 	append(amplitude, "%e*%e",
@@ -291,7 +291,16 @@ VolumeShader createVolumeShader(
 		const std::size_t wave_count)
 {
 	/// @todo Remove
-	testMath();
+	if (1) {
+		testMath();
+		HWaveFunc wf= createHWaveFunc(
+				waves[0].n,
+				waves[0].l,
+				waves[0].m,
+				waves[0].phase);
+		Complex I= interferenceIntegral(&wf, &wf, 10.0);
+		std::printf("Integral: %f, %f\n", I.a, I.b);
+	}
 
 	assert(wave_count > 0);
 
@@ -304,8 +313,7 @@ VolumeShader createVolumeShader(
 				waves[wave_i].n,
 				waves[wave_i].l,
 				waves[wave_i].m,
-				waves[wave_i].phase,
-				1.0);
+				waves[wave_i].phase);
 		hydrogenWaveFuncStr(
 				&wf,
 				&hydrogen_amplitudes[wave_i],

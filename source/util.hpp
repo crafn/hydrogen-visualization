@@ -43,8 +43,22 @@ template <typename T, typename U>
 T cast(Vec2<U> v) { return T((typename T::Value)v.x, (typename T::Value)v.y); }
 
 struct Complex {
-	float a, b;
+	double a, b;
 };
+
+inline
+Complex conj(Complex c)
+{
+	c.b *= -1;
+	return c;
+}
+
+inline
+Complex operator*(Complex c1, Complex c2)
+{
+	Complex c= { c1.a*c2.a - c1.b*c2.b, c1.a*c2.b + c1.b*c2.a };
+	return c;
+}
 
 inline
 Vec2f fitToGrid(Vec2f v, Vec2i reso)
