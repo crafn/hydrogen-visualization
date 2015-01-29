@@ -157,61 +157,85 @@ HWaveFunc createHWaveFunc(int n, int l, int m, double phase)
 	return w;
 }
 
-Complex value(const HWaveFunc* w, double r, double cos_theta, double sin_theta, double phi)
+/// Used in `inteferenceIntegral`
+void precalc(
+		const HWaveFunc* w,
+		double* r_dependent, int r_size, double r_max,
+		double* theta_dependent, int theta_size,
+		Complex* phi_dependent, int phi_size)
 {
-	const double rho= 2*r/(w->n*bohrRadius);
-	double amplitude= 0.0;
-	double phase= 0.0;
-
-	// C
-	amplitude= w->normalization;
-
-	// E
-	amplitude *= std::exp(-rho/2.0)*std::pow(rho, w->l);
-
-	// L
-	{
+	for (int r_i= 0; r_i < r_size; ++r_i) {
+		const double r= r_max*r_i/r_size;
+		const double rho= 2*r/(w->n*bohrRadius);
+		double amplitude= 0.0;
+		// C
+		amplitude= w->normalization;
+		// E
+		amplitude *= std::exp(-rho/2.0)*std::pow(rho, w->l);
+		// L
 		double sum= 0.0;
 		for (std::size_t i= 0; i < maxHPolyTermCount; ++i)
 			sum += w->laguerreCoeff[i]*std::pow(rho, i);
 		amplitude *= sum;
+
+		r_dependent[r_i]= amplitude;
 	}
 
-	// Y
-	{
+	// Y (without phase)
+	for (int theta_i= 0; theta_i < theta_size; ++theta_i) {
+		const double theta= -pi/2.0 + pi*theta_i/theta_size;
+		const double cos_theta= std::cos(theta);
 		double sum= 0.0;
 		for (std::size_t i= 0; i < maxHPolyTermCount; ++i)
 			sum += w->spheCoeff[i]*std::pow(cos_theta, i);
-		amplitude *= std::pow(sin_theta, std::abs(w->m))*sum;
-		phase += w->m*phi + w->phase;
+		theta_dependent[theta_i]= std::pow(std::sin(theta), std::abs(w->m))*sum;
 	}
 
-	Complex result= {};
-	result.a= amplitude*std::cos(phase);
-	result.b= amplitude*std::sin(phase);
-	return result;
+	// Y (phase)
+	for (int phi_i= 0; phi_i < phi_size; ++phi_i) {
+		const double phi= tau*phi_i/phi_size;
+		phi_dependent[phi_i].a= std::cos(w->m*phi + w->phase);
+		phi_dependent[phi_i].b= std::sin(w->m*phi + w->phase);
+	}
 }
 
 /// Integral dx^3 psi_1 * conj(psi_2)
 Complex interferenceIntegral(
 		const HWaveFunc* psi_1,
 		const HWaveFunc* psi_2,
-		double max_r)
+		double r_max)
 {
+	const int r_steps= 100;
+	const int theta_steps= 40;
+	const int phi_steps= 80;
+
+	double r_1[r_steps]; // Normalization and r-dependencies
+	double r_2[r_steps];
+	double theta_1[theta_steps]; // Part of spherical harmonic
+	double theta_2[theta_steps];
+	Complex phi_1[phi_steps]; // Rest of spherical harmonic
+	Complex phi_2[phi_steps];
+
+	precalc(psi_1, r_1, r_steps, r_max, theta_1, theta_steps, phi_1, phi_steps);
+	precalc(psi_2, r_2, r_steps, r_max, theta_2, theta_steps, phi_2, phi_steps);
+
 	// Volume integral
+	const double dr= r_max/r_steps;
+	const double dtheta= pi/theta_steps;
+	const double dphi= tau/phi_steps;
 	Complex result= {};
-	double dphi= 0.1;
-	double dtheta= 0.1;
-	double dr= max_r/20.0;
-	for (double theta= -pi/2.0; theta < pi/2.0; theta += dtheta) {
-		double cos_theta= std::cos(theta);
-		double sin_theta= std::sin(theta);
-		for (double phi= 0.0; phi < 2.0*pi; phi += dphi) {
-			for (double r= 0.0; r < max_r; r += dr) {
-				Complex v1= value(psi_1, r, cos_theta, sin_theta, phi);
-				Complex v2= value(psi_2, r, cos_theta, sin_theta, phi);
+	for (int theta_i= 0; theta_i < theta_steps; ++theta_i) {
+		const double cos_theta= std::cos(-pi/2.0 + dtheta*theta_i);
+		for (int phi_i= 0; phi_i < phi_steps; ++phi_i) {
+			for (int r_i= 0; r_i < r_steps; ++r_i) {
+				/// @todo Offset by translation
+				double amplitude_1= r_1[r_i]*theta_1[theta_i];
+				double amplitude_2= r_2[r_i]*theta_2[theta_i];
+				Complex v1= { amplitude_1*phi_1[phi_i].a, amplitude_1*phi_1[phi_i].b };
+				Complex v2= { amplitude_2*phi_2[phi_i].a, amplitude_2*phi_2[phi_i].b };
 				Complex value= v1*conj(v2);
 
+				double r= dr*r_i;
 				double dV= r*r*cos_theta*dr*dphi*dtheta;
 				result.a += value.a*dV;
 				result.b += value.b*dV;
@@ -298,8 +322,8 @@ VolumeShader createVolumeShader(
 				waves[0].l,
 				waves[0].m,
 				waves[0].phase);
-		Complex I= interferenceIntegral(&wf, &wf, 10.0);
-		std::printf("Integral: %f, %f\n", I.a, I.b);
+		Complex I= interferenceIntegral(&wf, &wf, 100.0);
+		std::printf("<psi|psi>: %f, %f\n", I.a, I.b);
 	}
 
 	assert(wave_count > 0);
