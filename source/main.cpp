@@ -133,8 +133,12 @@ struct HWaveFunc {
 HWaveFunc createHWaveFunc(int n, int l, int m, double phase, double bohr_radius)
 {
 	assert(n > 0 && l >= 0);
-	assert(std::abs(n) > std::abs(l));
-	assert(std::abs(l) >= std::abs(m));
+	if (l > n - 1)
+		l= n - 1;
+	if (m > 0 && m > l)
+		m= l;
+	if (m < 0 && m < -l)
+		m= -l;
 
 	HWaveFunc w= {};
 	w.n= n;
@@ -218,55 +222,32 @@ Complex interferenceIntegral(
 }
 
 /// Formula for hydrogen wave function with parameters r, theta, and phi
-void hydrogenWaveFuncStr(int n, int l, int m, double phase, String* amplitude, String* phase_str)
+void hydrogenWaveFuncStr(const HWaveFunc* w, String* amplitude, String* phase_str)
 {
-	assert(amplitude->str && phase_str->str);
+	assert(w && amplitude->str && phase_str->str);
 
-	double bohr_radius= 1.0;
-	const int poly_term_count= maxHPolyTermCount;
-
-	assert(n > 0 && l >= 0);
-	if (l > n - 1)
-		l= n - 1;
-	if (m > 0 && m > l)
-		m= l;
-	if (m < 0 && m < -l)
-		m= -l;
-
-	// Form a hydrogen wave function |nlm> in four parts
-	// psi_nlm(r, theta, phi) = A*C*E*L*Y, where
-	//   C = normalization factor sqrt[(2/(n*a_0))^3*(n - l - 1)!/(2n(n + l)!)]
-	//   E = e^(-rho/2)*rho^l
-	//   L = Generalized Laguerre Polynomial L(n - l - 1, 2l + 1, rho)
-	//   Y = Spherical harmonic function Y(l, m, theta, phi) (complex phase is separated to different string)
-	//   rho = 2r/(n*a_0)
 	const std::size_t rho_str_size= 16;
 	char rho_str[rho_str_size];
-	std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/bohr_radius/n);
+	std::snprintf(rho_str, rho_str_size, "%e*r", 2.0/w->a0/w->n);
 
 	// C
 	append(amplitude, "%e*%e",
-		std::sqrt(	std::pow(2.0/(n*bohr_radius), 3)*
-					fact(n - l - 1)/(2*n*fact(n + l))),
-		1.0 + 2.0*std::pow(n, 2.5) // Totally ad-hoc factor to keep the brightness at somewhat const level
+		w->normalization,
+		1.0 + 2.0*std::pow(w->n, 2.5) // Totally ad-hoc factor to keep the brightness at somewhat const level
 		);
 	append(amplitude, "*");
 
 	// E
-	append(amplitude, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, l);
+	append(amplitude, "exp(-%s/2.0)*pow(%s, %i.0)", rho_str, rho_str, w->l);
 	append(amplitude, "*");
 
 	{ // L
 		append(amplitude, "(");
-		double laguerre_coeff[poly_term_count]= {};
-		assert(n - l < poly_term_count);
-
-		laguerre(laguerre_coeff, n - l - 1, 2*l + 1);
-		for (int i= 0; i < poly_term_count; ++i) {
-			if (laguerre_coeff[i] == 0.0)
+		for (std::size_t i= 0; i < maxHPolyTermCount; ++i) {
+			if (w->laguerreCoeff[i] == 0.0)
 				continue;
 
-			append(amplitude, "+%e", laguerre_coeff[i]);
+			append(amplitude, "+%e", w->laguerreCoeff[i]);
 			if (i != 0)
 				append(amplitude, "*pow(%s, %i.0)", rho_str, i);
 		}
@@ -275,21 +256,18 @@ void hydrogenWaveFuncStr(int n, int l, int m, double phase, String* amplitude, S
 	append(amplitude, "*");
 
 	{ // Y
-		if (m != 0)
+		if (w->m != 0)
 			append(amplitude,
 				"%s*pow(abs(sin_theta), %i.0)*",
-				(std::abs(m) % 2 ? "sign(sin_theta)" : "1.0"),
-				std::abs(m));
+				(std::abs(w->m) % 2 ? "sign(sin_theta)" : "1.0"),
+				std::abs(w->m));
 		append(amplitude, "(");
 
-		double spherical_coeff[poly_term_count]= {};
-		assert(l - 1 < poly_term_count);
-		sphericalHarmonics(spherical_coeff, l, m);
-		for (int i= 0; i < poly_term_count; ++i) {
-			if (spherical_coeff[i] == 0.0)
+		for (std::size_t i= 0; i < maxHPolyTermCount; ++i) {
+			if (w->spheCoeff[i] == 0.0)
 				continue;
 
-			append(amplitude, "+(%e)", spherical_coeff[i]);
+			append(amplitude, "+(%e)", w->spheCoeff[i]);
 			if (i != 0)
 				append(amplitude,
 					"*%s*pow(abs(cos_theta), %i.0)",
@@ -298,7 +276,7 @@ void hydrogenWaveFuncStr(int n, int l, int m, double phase, String* amplitude, S
 		}
 		append(amplitude, ")");
 
-		append(phase_str, "%i.0*phi + (%e)", m, phase);
+		append(phase_str, "%i.0*phi + (%e)", w->m, w->phase);
 	}
 
 	//std::printf("Wave function:\n%s\n", amplitude.str);
@@ -322,11 +300,14 @@ VolumeShader createVolumeShader(
 	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
 		hydrogen_amplitudes[wave_i]= createString();
 		hydrogen_phases[wave_i]= createString();
-		hydrogenWaveFuncStr(
+		HWaveFunc wf= createHWaveFunc(
 				waves[wave_i].n,
 				waves[wave_i].l,
 				waves[wave_i].m,
 				waves[wave_i].phase,
+				1.0);
+		hydrogenWaveFuncStr(
+				&wf,
 				&hydrogen_amplitudes[wave_i],
 				&hydrogen_phases[wave_i]);
 	}
