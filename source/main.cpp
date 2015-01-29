@@ -93,9 +93,6 @@ struct Program {
 		float phase; /// Additional factor: e^(i*phase)
 		float n, l, m; /// Quantum numbers
 		float translation;
-		/// Two waves with the same `particle`form a superposition state
-		/// Two waves with differing `particle` form a molecule
-		int particle;
 	};
 	float phase;
 	float sampleCount;
@@ -183,7 +180,7 @@ void precalc(
 
 	// Y (without phase)
 	for (int theta_i= 0; theta_i < theta_size; ++theta_i) {
-		const double theta= -pi/2.0 + pi*theta_i/theta_size;
+		const double theta= pi*theta_i/theta_size;
 		const double cos_theta= std::cos(theta);
 		double sum= 0.0;
 		for (std::size_t i= 0; i < maxHPolyTermCount; ++i)
@@ -225,7 +222,7 @@ Complex interferenceIntegral(
 	const double dphi= tau/phi_steps;
 	Complex result= {};
 	for (int theta_i= 0; theta_i < theta_steps; ++theta_i) {
-		const double cos_theta= std::cos(-pi/2.0 + dtheta*theta_i);
+		const double sin_theta= std::sin(dtheta*theta_i);
 		for (int phi_i= 0; phi_i < phi_steps; ++phi_i) {
 			for (int r_i= 0; r_i < r_steps; ++r_i) {
 				/// @todo Offset by translation
@@ -236,7 +233,7 @@ Complex interferenceIntegral(
 				Complex value= v1*conj(v2);
 
 				double r= dr*r_i;
-				double dV= r*r*cos_theta*dr*dphi*dtheta;
+				double dV= r*r*sin_theta*dr*dphi*dtheta;
 				result.a += value.a*dV;
 				result.b += value.b*dV;
 			}
@@ -511,7 +508,7 @@ void addWave(Program& prog)
 	Slider n= { "n", 1, 12, &last(prog.waves).n, 0, true };
 	Slider l= { "l", 0, 11, &last(prog.waves).l, 0, true };
 	Slider m= { "m", -11, 11, &last(prog.waves).m, 0, true };
-	Slider translation= { "translation", -5.0, 5.0, &last(prog.waves).translation, 3, true };
+	Slider translation= { "translation", -5.0, 5.0, &last(prog.waves).translation, 1, true };
 	push(prog.sliders, amplitude);
 	push(prog.sliders, phase);
 	push(prog.sliders, n);
