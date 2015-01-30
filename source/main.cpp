@@ -200,11 +200,12 @@ void precalc(
 Complex interferenceIntegral(
 		const HWaveFunc* psi_1,
 		const HWaveFunc* psi_2,
-		double r_max)
+		double r_max,
+		double z_distance)
 {
 	const int r_steps= 100;
 	const int theta_steps= 40;
-	const int phi_steps= 80;
+	const int phi_steps= 40;
 
 	double r_1[r_steps]; // Normalization and r-dependencies
 	double r_2[r_steps];
@@ -216,18 +217,42 @@ Complex interferenceIntegral(
 	precalc(psi_1, r_1, r_steps, r_max, theta_1, theta_steps, phi_1, phi_steps);
 	precalc(psi_2, r_2, r_steps, r_max, theta_2, theta_steps, phi_2, phi_steps);
 
-	// Volume integral
 	const double dr= r_max/r_steps;
 	const double dtheta= pi/theta_steps;
 	const double dphi= tau/phi_steps;
+
+	const double dz= z_distance;
+	struct DZLookup {
+		uint16 r, theta;
+	};
+	DZLookup dz_lookup[r_steps*theta_steps];
+	for (int theta_i= 0; theta_i < theta_steps; ++theta_i) {
+		double cos_theta= std::cos(dtheta*theta_i);
+		for (int r_i= 0; r_i < r_steps; ++r_i) {
+			double r= r_i*dr;
+			double r_prime= std::sqrt(r*r + dz*dz - 2.0*r*dz*cos_theta);
+			double theta_prime= std::acos((r*cos_theta - dz)/(r_prime + 0.00000001));
+			assert(r_prime >= 0.0);
+			assert(theta_prime >= 0.0);
+			DZLookup lookup= { (uint16)(r_prime/dr), (uint16)(theta_prime/dtheta) };
+			assert(lookup.theta < theta_steps);
+			if (lookup.r >= r_steps)
+				lookup.r= r_steps - 1;
+			dz_lookup[r_i + theta_i*r_steps]= lookup;
+		}
+	}
+
+	// Volume integral
 	Complex result= {};
 	for (int theta_i= 0; theta_i < theta_steps; ++theta_i) {
 		const double sin_theta= std::sin(dtheta*theta_i);
 		for (int phi_i= 0; phi_i < phi_steps; ++phi_i) {
 			for (int r_i= 0; r_i < r_steps; ++r_i) {
-				/// @todo Offset by translation
 				double amplitude_1= r_1[r_i]*theta_1[theta_i];
-				double amplitude_2= r_2[r_i]*theta_2[theta_i];
+
+				DZLookup lookup= dz_lookup[r_i + theta_i*r_steps];
+				double amplitude_2= r_2[lookup.r]*theta_2[lookup.theta];
+
 				Complex v1= { amplitude_1*phi_1[phi_i].a, amplitude_1*phi_1[phi_i].b };
 				Complex v2= { amplitude_2*phi_2[phi_i].a, amplitude_2*phi_2[phi_i].b };
 				Complex value= v1*conj(v2);
@@ -311,23 +336,23 @@ VolumeShader createVolumeShader(
 		const Program::Wave* waves,
 		const std::size_t wave_count)
 {
-	/// @todo Remove
-	if (1) {
-		testMath();
-		HWaveFunc wf= createHWaveFunc(
-				waves[0].n,
-				waves[0].l,
-				waves[0].m,
-				waves[0].phase);
-		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
-		Complex I= interferenceIntegral(&wf, &wf, max_r);
-		std::printf("<psi|psi>: %f, %f\n", I.a, I.b);
-	}
+#ifdef DEBUG
+	testMath();
+	HWaveFunc wf= createHWaveFunc(
+			waves[0].n,
+			waves[0].l,
+			waves[0].m,
+			waves[0].phase);
+	double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
+	Complex I= interferenceIntegral(&wf, &wf, max_r, 0.0);
+	std::printf("<psi|psi>: %f, %f\n", I.a, I.b);
+#endif
 
 	assert(wave_count > 0);
 
 	String hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
 	String hydrogen_phases[Program_maxWaves]= {}; // Complex phase
+	bool molecule= false;
 	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
 		hydrogen_amplitudes[wave_i]= createString();
 		hydrogen_phases[wave_i]= createString();
@@ -340,6 +365,28 @@ VolumeShader createVolumeShader(
 				&wf,
 				&hydrogen_amplitudes[wave_i],
 				&hydrogen_phases[wave_i]);
+		if (waves[wave_i].amplitude > 0.0 && waves[wave_i].translation != 0.0)
+			molecule= true;
+	}
+
+	if (molecule) {
+		assert(wave_count == 2 && "Molecule visualization only supported for two wave funcs");
+
+		HWaveFunc wf_1= createHWaveFunc(
+				waves[0].n,
+				waves[0].l,
+				waves[0].m,
+				waves[0].phase);
+		HWaveFunc wf_2= createHWaveFunc(
+				waves[1].n,
+				waves[1].l,
+				waves[1].m,
+				waves[1].phase);
+
+		Complex I= interferenceIntegral(
+				&wf_1, &wf_2, max_r,
+				waves[1].translation - waves[0].translation);
+		std::printf("<psi_1|psi_2>: %f, %f\n", I.a, I.b);
 	}
 
 	const GLchar* vs_src=

@@ -4,10 +4,13 @@
 #include <cassert>
 #include <cmath>
 #include <cstdarg>
+#include <inttypes.h>
 
 namespace qm {
 
 const double radToDeg= 57.2957795;
+
+typedef uint16_t uint16;
 
 template <typename T>
 struct Vec2 {
