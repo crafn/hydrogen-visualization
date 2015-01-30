@@ -12,6 +12,9 @@ const double radToDeg= 57.2957795;
 
 typedef uint16_t uint16;
 
+float clamp(float v, float l, float u)
+{ return v < l ? l : v > u ? u : v; }
+
 template <typename T>
 struct Vec2 {
 	T x, y;

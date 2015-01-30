@@ -223,6 +223,8 @@ Complex interferenceIntegral(
 	const double dtheta= pi/theta_steps;
 	const double dphi= tau/phi_steps;
 
+	// Lookup table for r -> r' and theta -> theta' corresponding to
+	// z -> z + dz for second wavefunction
 	const double dz= z_distance;
 	struct DZLookup {
 		uint16 r, theta;
@@ -233,7 +235,9 @@ Complex interferenceIntegral(
 		for (int r_i= 0; r_i < r_steps; ++r_i) {
 			double r= r_i*dr;
 			double r_prime= std::sqrt(r*r + dz*dz - 2.0*r*dz*cos_theta);
-			double theta_prime= std::acos((r*cos_theta - dz)/(r_prime + 0.00000001));
+			double theta_prime= std::acos(clamp(
+						(r*cos_theta - dz)/(r_prime + 0.00000001),
+						0.0, 1.0));
 			assert(r_prime >= 0.0);
 			assert(theta_prime >= 0.0);
 			DZLookup lookup= { (uint16)(r_prime/dr), (uint16)(theta_prime/dtheta) };
@@ -341,14 +345,16 @@ VolumeShader createVolumeShader(
 {
 #ifdef DEBUG
 	testMath();
-	HWaveFunc wf= createHWaveFunc(
-			waves[0].n,
-			waves[0].l,
-			waves[0].m,
-			waves[0].phase);
-	double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
-	Complex I= interferenceIntegral(&wf, &wf, max_r, 0.0);
-	std::printf("<psi|psi>: %f, %f\n", I.a, I.b);
+	if (wave_count > 0) {
+		HWaveFunc wf= createHWaveFunc(
+				waves[0].n,
+				waves[0].l,
+				waves[0].m,
+				waves[0].phase);
+		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
+		Complex I= interferenceIntegral(&wf, &wf, max_r, 0.0);
+		std::printf("<psi|psi>: %f, %f\n", I.a, I.b);
+	}
 #endif
 
 	assert(wave_count > 0);
@@ -387,6 +393,7 @@ VolumeShader createVolumeShader(
 				waves[1].m,
 				waves[1].phase);
 
+		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
 		Complex I= interferenceIntegral(
 				&wf_1, &wf_2, max_r,
 				waves[1].translation - waves[0].translation);
