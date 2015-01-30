@@ -13,6 +13,8 @@
 
 #define local_persist static
 
+/// @todo Replace references with pointers for clarity
+
 namespace qm {
 
 const float sliderHeight= 0.05;
@@ -89,7 +91,6 @@ struct Program {
 
 	/// Slider settings
 	struct Wave {
-		float amplitude;
 		float phase; /// Additional factor: e^(i*phase)
 		float n, l, m; /// Quantum numbers
 		float translation;
@@ -103,6 +104,7 @@ struct Program {
 	float absorption;
 	float cutoff;
 	float distance;
+	float amplitude;
 	StackArray<Wave, Program_maxWaves> waves;
 	StackArray<Slider, Program_maxSliders> sliders;
 };
@@ -333,6 +335,7 @@ VolumeShader createVolumeShader(
 		const bool complex_color,
 		const float absorption,
 		const float cutoff,
+		const float visual_amplitude,
 		const Program::Wave* waves,
 		const std::size_t wave_count)
 {
@@ -365,13 +368,14 @@ VolumeShader createVolumeShader(
 				&wf,
 				&hydrogen_amplitudes[wave_i],
 				&hydrogen_phases[wave_i]);
-		if (waves[wave_i].amplitude > 0.0 && waves[wave_i].translation != 0.0)
+		if (wave_count > 1 && waves[wave_i].translation != 0.0)
 			molecule= true;
 	}
 
 	if (molecule) {
 		assert(wave_count == 2 && "Molecule visualization only supported for two wave funcs");
 
+		/// @todo Don't recreate these -- already calculated
 		HWaveFunc wf_1= createHWaveFunc(
 				waves[0].n,
 				waves[0].l,
@@ -460,7 +464,7 @@ VolumeShader createVolumeShader(
 	String calc_total_wavefunc_define= createString();
 	append(&calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
 	for (int i= 0; i < (int)wave_count; ++i) {
-		if (waves[i].amplitude <= 0.001)
+		if (waves[i].n == 0)
 			continue;
 		append(&calc_total_wavefunc_define,
 			"cart_p= v_pos + n*dist + vec3(0.0, 0.0, %e);"
@@ -476,8 +480,8 @@ VolumeShader createVolumeShader(
 			waves[i].translation,
 			i, hydrogen_amplitudes[i].str,
 			i, hydrogen_phases[i].str,
-			i, i, waves[i].amplitude,
-			i, i, waves[i].amplitude);
+			i, i, visual_amplitude,
+			i, i, visual_amplitude);
 	}
 
 	String buf= createString();
@@ -546,23 +550,40 @@ void destroyFbo(VolumeFbo& fbo)
 void addWave(Program& prog)
 {
 	Program::Wave w= {};
-	w.n= 1;
+	w.n= 0;
 	if (prog.waves.size == 0)
-		w.amplitude= 1.0;
+		w.n= 1;
 	push(prog.waves, w);
 
-	Slider amplitude= { "Amplitude", 0.0, 2.0, &last(prog.waves).amplitude, 3, true };
 	Slider phase= { "Complex phase", 0.0, (float)tau, &last(prog.waves).phase, 3, true };
-	Slider n= { "n", 1, 12, &last(prog.waves).n, 0, true };
+	Slider n= { "n", 0, 12, &last(prog.waves).n, 0, true };
 	Slider l= { "l", 0, 11, &last(prog.waves).l, 0, true };
 	Slider m= { "m", -11, 11, &last(prog.waves).m, 0, true };
 	Slider translation= { "translation", -5.0, 5.0, &last(prog.waves).translation, 1, true };
-	push(prog.sliders, amplitude);
 	push(prog.sliders, phase);
 	push(prog.sliders, n);
 	push(prog.sliders, l);
 	push(prog.sliders, m);
 	push(prog.sliders, translation);
+}
+
+void createVolumeShaderForProgram(Program* prog)
+{
+	Program::Wave used_waves[Program_maxWaves]= {};
+	Program::Wave* next_wave= used_waves;
+	for (std::size_t i= 0; i < prog->waves.size; ++i) {
+		if (prog->waves.data[i].n > 0)
+			*next_wave++ = prog->waves.data[i];
+	}
+
+	prog->shader=
+		createVolumeShader(
+			prog->sampleCount,
+			prog->complexColor,
+			prog->absorption,
+			prog->cutoff,
+			prog->amplitude,
+			used_waves, next_wave - used_waves);
 }
 
 void init(Env& env, Program& prog)
@@ -663,6 +684,7 @@ void init(Env& env, Program& prog)
 		prog.absorption= 0.0;
 		prog.cutoff= 0.0;
 		prog.distance= 2.0;
+		prog.amplitude= 1.0;
 
 		Slider default_sliders[] = {
 			{ "Time",			0.0,	5.0,	&prog.phase,			3, false },
@@ -676,6 +698,7 @@ void init(Env& env, Program& prog)
 			{ "Absorption",		0.0,	1.0,	&prog.absorption,		3, true },
 			{ "Cutoff",			0.0,	0.15,	&prog.cutoff,			4, true },
 			{ "Distance",		0.2,	150.0,	&prog.distance,			4, false },
+			{ "Amplitude",		0.0,	2.0,	&prog.amplitude,		3, true }
 		};
 		const std::size_t default_slider_count= sizeof(default_sliders)/sizeof(*default_sliders);
 		for (std::size_t i= 0; i < default_slider_count; ++i)
@@ -684,13 +707,7 @@ void init(Env& env, Program& prog)
 		addWave(prog);
 		addWave(prog);
 
-		prog.shader=
-			createVolumeShader(
-				prog.sampleCount,
-				prog.complexColor,
-				prog.absorption,
-				prog.cutoff,
-				prog.waves.data, prog.waves.size);
+		createVolumeShaderForProgram(&prog);
 		prog.fbo= createFbo(env.winSize*prog.resoMul, prog.filtering > 0.5);
 	}
 
@@ -765,13 +782,7 @@ void frame(const Env& env, Program& prog)
 					destroyGlShaderProgram(	prog.shader.prog,
 											prog.shader.vs,
 											prog.shader.fs);
-					prog.shader=
-						createVolumeShader(
-							prog.sampleCount,
-							prog.complexColor,
-							prog.absorption,
-							prog.cutoff,
-							prog.waves.data, prog.waves.size);
+					createVolumeShaderForProgram(&prog);
 				}
 			} else {
 				slider_hover[i]= false;
