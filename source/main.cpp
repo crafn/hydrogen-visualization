@@ -104,7 +104,8 @@ struct Program {
 	float absorption;
 	float cutoff;
 	float distance;
-	float amplitude;
+	float brightness;
+	float h2Symmetry; // bool
 	StackArray<Wave, Program_maxWaves> waves;
 	StackArray<Slider, Program_maxSliders> sliders;
 };
@@ -206,8 +207,8 @@ Complex interferenceIntegral(
 		double z_distance)
 {
 	const int r_steps= 100;
-	const int theta_steps= 40;
-	const int phi_steps= 40;
+	const int theta_steps= 70;
+	const int phi_steps= 70;
 
 	// Wavefunction values are divided to different precalculated tables
 	double r_1[r_steps]; // Normalization and r-dependencies
@@ -285,7 +286,7 @@ void hydrogenWaveFuncStr(const HWaveFunc* w, String* amplitude, String* phase_st
 	// C
 	append(amplitude, "%e*%e",
 		w->normalization,
-		1.0 + 2.0*std::pow(w->n, 2.0) // Totally ad-hoc factor to keep the brightness at somewhat const level
+		1.0 //1.0 + 2.0*std::pow(w->n, 2.0) // Totally ad-hoc factor to keep the brightness at somewhat const level
 		);
 	append(amplitude, "*");
 
@@ -339,7 +340,8 @@ VolumeShader createVolumeShader(
 		const bool complex_color,
 		const float absorption,
 		const float cutoff,
-		const float visual_amplitude,
+		const float visual_brightness,
+		const bool h2_symmetry,
 		const Program::Wave* waves,
 		const std::size_t wave_count)
 {
@@ -385,12 +387,13 @@ VolumeShader createVolumeShader(
 		assert(wave_count == 2 && "Molecule visualization only supported for exactly two wavefuncs");
 
 		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
-		Complex I= interferenceIntegral(
+		Complex integral= interferenceIntegral(
 				&hwavefuncs[0], &hwavefuncs[1], max_r,
 				waves[1].translation - waves[0].translation);
-		std::printf("<psi_1|psi_2>: %f, %f\n", I.a, I.b);
+		std::printf("<psi_1|psi_2>: %f, %f\n", integral.a, integral.b);
 
 		append(&calc_total_wavefunc_define, "%s",
+				"vec3 cart_p= v_pos + n*dist;"
 				"float r, phi, cos_theta, theta, sin_theta;");
 		for (int i= 0; i < (int)wave_count; ++i) {
 			append(&calc_total_wavefunc_define,
@@ -402,14 +405,23 @@ VolumeShader createVolumeShader(
 					"sin_theta= sin(theta);"
 					"float a_%i= (%s);" // Can be negative
 					"float p_%i= (%s);" // Not taking account possible negative amplitude
-					"float real_%i += a_%i*cos(p_%i);"
-					"float imag_%i += a_%i*sin(p_%i);",
+					"float real_%i = a_%i*cos(p_%i);"
+					"float imag_%i = a_%i*sin(p_%i);",
 					waves[i].translation,
 					i, hydrogen_amplitudes[i].str,
 					i, hydrogen_phases[i].str,
 					i, i, i,
 					i, i, i);
 		}
+
+		append(&calc_total_wavefunc_define,
+				"const float real_int= %e;"
+				"const float imag_int= %e;"
+				"float real_interf= real_0*real_1*real_int + imag_0*imag_1*real_int"
+				"					- real_0*imag_1*imag_int + real_1*imag_0*imag_int;"
+				"P= 0.25*(real_0*real_0 + imag_0*imag_0 + real_1*real_1 + imag_1*imag_1 SPACE_PART_SYMMETRY 2*real_interf);"
+				"total_complex_phase= atan2(imag_0 + imag_1, real_0 + real_1);",
+				integral.a, integral.b);
 
 	} else {
 		// Superposition rendering
@@ -511,12 +523,14 @@ VolumeShader createVolumeShader(
 		"#define ABSORPTION_MUL %e\n"
 		"#define CUTOFF %e\n"
 		"#define VISUAL_AMPLITUDE %e\n"
+		"#define SPACE_PART_SYMMETRY %s\n"
 		"%s\n",
 		sample_count,
 		complex_color,
 		absorption,
 		cutoff,
-		visual_amplitude*visual_amplitude,
+		std::pow(visual_brightness, 5),
+		h2_symmetry ? "+" : "-",
 		calc_total_wavefunc_define.str);
 	const GLchar* fs_src[]= { buf.str, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
@@ -603,7 +617,8 @@ void createVolumeShaderForProgram(Program* prog)
 			prog->complexColor,
 			prog->absorption,
 			prog->cutoff,
-			prog->amplitude,
+			prog->brightness,
+			prog->h2Symmetry,
 			used_waves, next_wave - used_waves);
 }
 
@@ -705,7 +720,7 @@ void init(Env& env, Program& prog)
 		prog.absorption= 0.0;
 		prog.cutoff= 0.0;
 		prog.distance= 4.0;
-		prog.amplitude= 1.0;
+		prog.brightness= 2.0;
 
 		Slider default_sliders[] = {
 			{ "Time",			0.0,	5.0,	&prog.phase,			3, false },
@@ -719,7 +734,8 @@ void init(Env& env, Program& prog)
 			{ "Absorption",		0.0,	1.0,	&prog.absorption,		3, true },
 			{ "Cutoff",			0.0,	0.15,	&prog.cutoff,			4, true },
 			{ "Distance",		0.5,	200.0,	&prog.distance,			4, false },
-			{ "Amplitude",		0.0,	2.0,	&prog.amplitude,		3, true }
+			{ "Brightness",		0.0,	10.0,	&prog.brightness,		3, true },
+			{ "H2 symmetry",	0,		1,		&prog.h2Symmetry,		0, true }
 		};
 		const std::size_t default_slider_count= sizeof(default_sliders)/sizeof(*default_sliders);
 		for (std::size_t i= 0; i < default_slider_count; ++i)
