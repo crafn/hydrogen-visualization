@@ -209,13 +209,13 @@ Complex interferenceIntegral(
 	const int theta_steps= 40;
 	const int phi_steps= 40;
 
+	// Wavefunction values are divided to different precalculated tables
 	double r_1[r_steps]; // Normalization and r-dependencies
 	double r_2[r_steps];
-	double theta_1[theta_steps]; // Part of spherical harmonic
+	double theta_1[theta_steps]; // Part of spherical harmonic (theta-dependent)
 	double theta_2[theta_steps];
-	Complex phi_1[phi_steps]; // Rest of spherical harmonic
+	Complex phi_1[phi_steps]; // Rest of spherical harmonic (phi-dependent)
 	Complex phi_2[phi_steps];
-
 	precalc(psi_1, r_1, r_steps, r_max, theta_1, theta_steps, phi_1, phi_steps);
 	precalc(psi_2, r_2, r_steps, r_max, theta_2, theta_steps, phi_2, phi_steps);
 
@@ -285,7 +285,7 @@ void hydrogenWaveFuncStr(const HWaveFunc* w, String* amplitude, String* phase_st
 	// C
 	append(amplitude, "%e*%e",
 		w->normalization,
-		1.0 + 2.0*std::pow(w->n, 2.5) // Totally ad-hoc factor to keep the brightness at somewhat const level
+		1.0 + 2.0*std::pow(w->n, 2.0) // Totally ad-hoc factor to keep the brightness at somewhat const level
 		);
 	append(amplitude, "*");
 
@@ -357,47 +357,87 @@ VolumeShader createVolumeShader(
 	}
 #endif
 
-	assert(wave_count > 0);
-
 	String hydrogen_amplitudes[Program_maxWaves]= {}; // Real multiplier
 	String hydrogen_phases[Program_maxWaves]= {}; // Complex phase
+	HWaveFunc hwavefuncs[Program_maxWaves]= {};
 	bool molecule= false;
 	for (std::size_t wave_i= 0; wave_i < wave_count; ++wave_i) {
 		hydrogen_amplitudes[wave_i]= createString();
 		hydrogen_phases[wave_i]= createString();
-		HWaveFunc wf= createHWaveFunc(
+		hwavefuncs[wave_i]= createHWaveFunc(
 				waves[wave_i].n,
 				waves[wave_i].l,
 				waves[wave_i].m,
 				waves[wave_i].phase);
 		hydrogenWaveFuncStr(
-				&wf,
+				&hwavefuncs[wave_i],
 				&hydrogen_amplitudes[wave_i],
 				&hydrogen_phases[wave_i]);
 		if (wave_count > 1 && waves[wave_i].translation != 0.0)
 			molecule= true;
 	}
 
+	String calc_total_wavefunc_define= createString();
+	append(&calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
 	if (molecule) {
-		assert(wave_count == 2 && "Molecule visualization only supported for two wave funcs");
-
-		/// @todo Don't recreate these -- already calculated
-		HWaveFunc wf_1= createHWaveFunc(
-				waves[0].n,
-				waves[0].l,
-				waves[0].m,
-				waves[0].phase);
-		HWaveFunc wf_2= createHWaveFunc(
-				waves[1].n,
-				waves[1].l,
-				waves[1].m,
-				waves[1].phase);
+		// Molecule rendering
+		// |psi_total| = |psi_1|^2 + |psi_2|^2 +- interference
+		assert(wave_count == 2 && "Molecule visualization only supported for exactly two wavefuncs");
 
 		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
 		Complex I= interferenceIntegral(
-				&wf_1, &wf_2, max_r,
+				&hwavefuncs[0], &hwavefuncs[1], max_r,
 				waves[1].translation - waves[0].translation);
 		std::printf("<psi_1|psi_2>: %f, %f\n", I.a, I.b);
+
+		append(&calc_total_wavefunc_define, "%s",
+				"float r, phi, cos_theta, theta, sin_theta;");
+		for (int i= 0; i < (int)wave_count; ++i) {
+			append(&calc_total_wavefunc_define,
+					"cart_p= v_pos + n*dist + vec3(0.0, 0.0, %e);"
+					"r= sqrt(dot(cart_p, cart_p));"
+					"phi= atan2(cart_p.y, cart_p.x);"
+					"cos_theta= cart_p.z/r;"
+					"theta= acos(cos_theta);"
+					"sin_theta= sin(theta);"
+					"float a_%i= (%s);" // Can be negative
+					"float p_%i= (%s);" // Not taking account possible negative amplitude
+					"float real_%i += a_%i*cos(p_%i);"
+					"float imag_%i += a_%i*sin(p_%i);",
+					waves[i].translation,
+					i, hydrogen_amplitudes[i].str,
+					i, hydrogen_phases[i].str,
+					i, i, i,
+					i, i, i);
+		}
+
+	} else {
+		// Superposition rendering
+		// |psi_total| = |psi_1|^2 + |psi_2|^2
+		append(&calc_total_wavefunc_define, "%s",
+				"vec3 cart_p= v_pos + n*dist;"
+				"float r, phi, cos_theta, theta, sin_theta;"
+				"float total_real= 0;"
+				"float total_imag= 0;");
+		for (int i= 0; i < (int)wave_count; ++i) {
+			append(&calc_total_wavefunc_define,
+				"r= sqrt(dot(cart_p, cart_p));"
+				"phi= atan2(cart_p.y, cart_p.x);"
+				"cos_theta= cart_p.z/r;"
+				"theta= acos(cos_theta);"
+				"sin_theta= sin(theta);"
+				"float a_%i= (%s);" // Can be negative
+				"float p_%i= (%s);" // Not taking account possible negative amplitude
+				"total_real += a_%i*cos(p_%i);"
+				"total_imag += a_%i*sin(p_%i);",
+				i, hydrogen_amplitudes[i].str,
+				i, hydrogen_phases[i].str,
+				i, i,
+				i, i);
+		}
+		append(&calc_total_wavefunc_define, "%s",
+				"P= total_real*total_real + total_imag*total_imag;"
+				"total_complex_phase= atan2(total_imag, total_real);");
 	}
 
 	const GLchar* vs_src=
@@ -444,14 +484,9 @@ VolumeShader createVolumeShader(
 		"	float dl= u_rayLength/SAMPLE_COUNT;"
 		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
 		"		float dist= u_rayLength*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
-		"		vec3 cart_p;"
-		"		float r, phi, cos_theta, theta, sin_theta;"
-		"		float total_real= 0;"
-		"		float total_imag= 0;"
+		"		float P, total_complex_phase;"
 		"		CALC_TOTAL_WAVEFUNC;"
-		"		float total_amplitude= total_real*total_real + total_imag*total_imag;"
-		"		float total_complex_phase= atan2(total_imag, total_real);"
-		"		float P= total_amplitude*total_amplitude;"
+		"		P *= VISUAL_AMPLITUDE;"
 		"		if (P < CUTOFF) P= 0;"
 		"\n#if COMPLEX_COLOR == 1\n"
 		"		vec3 emission= P*normalize(vec3(0.5 - 0.5*cos(total_complex_phase), 0.2, 0.5 + 0.5*sin(total_complex_phase)));"
@@ -468,29 +503,6 @@ VolumeShader createVolumeShader(
 		"}"
 		"\n";
 
-	String calc_total_wavefunc_define= createString();
-	append(&calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
-	for (int i= 0; i < (int)wave_count; ++i) {
-		if (waves[i].n == 0)
-			continue;
-		append(&calc_total_wavefunc_define,
-			"cart_p= v_pos + n*dist + vec3(0.0, 0.0, %e);"
-			"r= sqrt(dot(cart_p, cart_p));"
-			"phi= atan2(cart_p.y, cart_p.x);"
-			"cos_theta= cart_p.z/r;"
-			"theta= acos(cos_theta);"
-			"sin_theta= sin(theta);"
-			"float a_%i= (%s);" // Can be negative
-			"float p_%i= (%s);" // Not taking account possible negative amplitude
-			"total_real += a_%i*cos(p_%i)*%e;"
-			"total_imag += a_%i*sin(p_%i)*%e;",
-			waves[i].translation,
-			i, hydrogen_amplitudes[i].str,
-			i, hydrogen_phases[i].str,
-			i, i, visual_amplitude,
-			i, i, visual_amplitude);
-	}
-
 	String buf= createString();
 	append(&buf,
 		"#version 120\n"
@@ -498,11 +510,13 @@ VolumeShader createVolumeShader(
 		"#define COMPLEX_COLOR %i\n"
 		"#define ABSORPTION_MUL %e\n"
 		"#define CUTOFF %e\n"
+		"#define VISUAL_AMPLITUDE %e\n"
 		"%s\n",
 		sample_count,
 		complex_color,
 		absorption,
 		cutoff,
+		visual_amplitude*visual_amplitude,
 		calc_total_wavefunc_define.str);
 	const GLchar* fs_src[]= { buf.str, fs_template_src };
 	const GLsizei fs_src_count= sizeof(fs_src)/sizeof(*fs_src);
@@ -690,7 +704,7 @@ void init(Env& env, Program& prog)
 		prog.complexColor= 0.0;
 		prog.absorption= 0.0;
 		prog.cutoff= 0.0;
-		prog.distance= 2.0;
+		prog.distance= 4.0;
 		prog.amplitude= 1.0;
 
 		Slider default_sliders[] = {
@@ -704,7 +718,7 @@ void init(Env& env, Program& prog)
 			{ "Complex color",	0,		1,		&prog.complexColor,		0, true },
 			{ "Absorption",		0.0,	1.0,	&prog.absorption,		3, true },
 			{ "Cutoff",			0.0,	0.15,	&prog.cutoff,			4, true },
-			{ "Distance",		0.2,	150.0,	&prog.distance,			4, false },
+			{ "Distance",		0.5,	200.0,	&prog.distance,			4, false },
 			{ "Amplitude",		0.0,	2.0,	&prog.amplitude,		3, true }
 		};
 		const std::size_t default_slider_count= sizeof(default_sliders)/sizeof(*default_sliders);
