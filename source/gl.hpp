@@ -79,6 +79,9 @@ typedef void (*GlEnableVertexAttribArray)(GLuint);
 GlEnableVertexAttribArray glEnableVertexAttribArray;
 typedef void (*GlVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const GLvoid*);
 GlVertexAttribPointer glVertexAttribPointer;
+typedef void (*GlBindAttribLocation)(GLuint program, GLuint index, const GLchar *name);
+GlBindAttribLocation glBindAttribLocation;
+
 
 // Required GL 3 features
 
@@ -124,6 +127,7 @@ void queryGlFuncs()
 	glDeleteBuffers= (GlDeleteBuffers)queryGlFunc("glDeleteBuffers");
 	glEnableVertexAttribArray= (GlEnableVertexAttribArray)queryGlFunc("glEnableVertexAttribArray");
 	glVertexAttribPointer= (GlVertexAttribPointer)queryGlFunc("glVertexAttribPointer");
+	glBindAttribLocation= (GlBindAttribLocation)queryGlFunc("glBindAttribLocation");
 
 	glGenFramebuffers= (GlGenFramebuffers)queryGlFunc("glGenFramebuffers");
 	glBindFramebuffer= (GlBindFramebuffer)queryGlFunc("glBindFramebuffer");
@@ -188,6 +192,8 @@ void createGlShaderProgram(	GLuint& prog, GLuint& vs, GLuint& fs,
 		prog= glCreateProgram();
 		glAttachShader(prog, vs);
 		glAttachShader(prog, fs);
+		glBindAttribLocation(prog, 0, "a_pos");
+		glBindAttribLocation(prog, 1, "a_uv");
 		glLinkProgram(prog);
 		checkProgramStatus(prog);
 	}
