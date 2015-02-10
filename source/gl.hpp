@@ -188,6 +188,8 @@ void createGlShaderProgram(	GLuint& prog, GLuint& vs, GLuint& fs,
 		prog= glCreateProgram();
 		glAttachShader(prog, vs);
 		glAttachShader(prog, fs);
+		glBindAttribLocation(prog, 0, "a_pos");
+		glBindAttribLocation(prog, 1, "a_uv");
 		glLinkProgram(prog);
 		checkProgramStatus(prog);
 	}
