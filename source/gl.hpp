@@ -79,6 +79,9 @@ typedef void (*GlEnableVertexAttribArray)(GLuint);
 GlEnableVertexAttribArray glEnableVertexAttribArray;
 typedef void (*GlVertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei, const GLvoid*);
 GlVertexAttribPointer glVertexAttribPointer;
+typedef void (*GlBindAttribLocation)(GLuint program, GLuint index, const GLchar *name);
+GlBindAttribLocation glBindAttribLocation;
+
 
 // Required GL 3 features
 
@@ -124,6 +127,7 @@ void queryGlFuncs()
 	glDeleteBuffers= (GlDeleteBuffers)queryGlFunc("glDeleteBuffers");
 	glEnableVertexAttribArray= (GlEnableVertexAttribArray)queryGlFunc("glEnableVertexAttribArray");
 	glVertexAttribPointer= (GlVertexAttribPointer)queryGlFunc("glVertexAttribPointer");
+	glBindAttribLocation= (GlBindAttribLocation)queryGlFunc("glBindAttribLocation");
 
 	glGenFramebuffers= (GlGenFramebuffers)queryGlFunc("glGenFramebuffers");
 	glBindFramebuffer= (GlBindFramebuffer)queryGlFunc("glBindFramebuffer");
