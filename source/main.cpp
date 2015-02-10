@@ -393,7 +393,7 @@ VolumeShader createVolumeShader(
 		std::printf("<psi_1|psi_2>: %f, %f\n", integral.a, integral.b);
 
 		append(&calc_total_wavefunc_define, "%s",
-				"vec3 cart_p= v_pos + n*dist;"
+				"vec3 cart_p;"
 				"float r, phi, cos_theta, theta, sin_theta;");
 		for (int i= 0; i < (int)wave_count; ++i) {
 			append(&calc_total_wavefunc_define,
