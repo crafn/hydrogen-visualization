@@ -801,8 +801,8 @@ void frame(const Env& env, Program& prog)
 	local_persist Vec2f prev_delta;
 	local_persist Vec2f rot;
 
+	bool slider_activity= false;
 	{ // User interaction
-		bool slider_activity= false;
 		for (std::size_t i= 0; i < prog.sliders.size; ++i) {
 			Slider& s= prog.sliders.data[i];
 			if (s.pointInside(i, env.anchorPos)) {
@@ -893,7 +893,7 @@ void frame(const Env& env, Program& prog)
 		drawRect(Vec2f(-1, -1), Vec2f(1, 1));
 	}
 
-	{ // Draw gui
+	if (slider_activity || !env.lmbDown) { // Draw gui
 		const Vec2f white_uv= prog.font.whiteTexelUv;
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
