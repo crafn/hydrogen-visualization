@@ -397,7 +397,7 @@ VolumeShader createVolumeShader(
 				"float r, phi, cos_theta, theta, sin_theta;");
 		for (int i= 0; i < (int)wave_count; ++i) {
 			append(&calc_total_wavefunc_define,
-					"cart_p= v_pos + n*dist + vec3(0.0, 0.0, %e);"
+					"cart_p= start_pos + n*dist + vec3(0.0, 0.0, %e);"
 					"r= sqrt(dot(cart_p, cart_p));"
 					"phi= atan2(cart_p.y, cart_p.x);"
 					"cos_theta= cart_p.z/r;"
@@ -427,7 +427,7 @@ VolumeShader createVolumeShader(
 		// Superposition rendering
 		// |psi_total| = |psi_1|^2 + |psi_2|^2
 		append(&calc_total_wavefunc_define, "%s",
-				"vec3 cart_p= v_pos + n*dist;"
+				"vec3 cart_p= start_pos + n*dist;"
 				"float r, phi, cos_theta, theta, sin_theta;"
 				"float total_real= 0;"
 				"float total_imag= 0;");
@@ -494,6 +494,7 @@ VolumeShader createVolumeShader(
 		"	vec3 intensity= vec3(0.0, 0.0, 0.0);"
 		"	float last_P= 0.0;"
 		"	float dl= u_rayLength/SAMPLE_COUNT;"
+		"	vec3 start_pos= v_pos + rand(v_uv.xy*u_time)*n*dl;"
 		"	for (int i= 0; i < SAMPLE_COUNT; ++i) {"
 		"		float dist= u_rayLength*float(SAMPLE_COUNT - i - 1)/float(SAMPLE_COUNT);"
 		"		float P, total_complex_phase;"
@@ -510,7 +511,6 @@ VolumeShader createVolumeShader(
 		"		intensity= max(vec3(0.0, 0.0, 0.0), intensity);"
 		"		last_P= P;"
 		"	}"
-		"	intensity += vec3(1.0, 1.0, 1.0)*rand(v_uv.xy*u_time)*0.015;"
 		"	gl_FragColor= vec4(intensity, 1.0);"
 		"}"
 		"\n";
@@ -801,8 +801,8 @@ void frame(const Env& env, Program& prog)
 	local_persist Vec2f prev_delta;
 	local_persist Vec2f rot;
 
+	bool slider_activity= false;
 	{ // User interaction
-		bool slider_activity= false;
 		for (std::size_t i= 0; i < prog.sliders.size; ++i) {
 			Slider& s= prog.sliders.data[i];
 			if (s.pointInside(i, env.anchorPos)) {
@@ -893,7 +893,7 @@ void frame(const Env& env, Program& prog)
 		drawRect(Vec2f(-1, -1), Vec2f(1, 1));
 	}
 
-	{ // Draw gui
+	if (slider_activity || !env.lmbDown) { // Draw gui
 		const Vec2f white_uv= prog.font.whiteTexelUv;
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, env.winSize.x, env.winSize.y);
