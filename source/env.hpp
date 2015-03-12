@@ -66,7 +66,8 @@ struct Env {
 	HWND hWnd;
 	HGLRC hGlrc;
 	DWORD ticks;
-	static bool closeEvent;
+	static bool closeMessage;
+	static bool lbuttondownMessage;
 #elif PLATFORM == PLATFORM_SDL
 	SDL_Window* win;
 	SDL_GLContext ctx;

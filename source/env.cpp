@@ -9,7 +9,8 @@
 namespace qm {
 
 #if PLATFORM == PLATFORM_WINDOWS
-bool Env::closeEvent;
+bool Env::closeMessage;
+bool Env::lbuttondownMessage;
 #endif
 
 Env envInit()
@@ -68,10 +69,13 @@ Env envInit()
 					PostQuitMessage(0);
 				break;
 				case WM_CLOSE:
-					Env::closeEvent= true;
+					Env::closeMessage= true;
 				break;
 				case WM_MOUSEMOVE:
 					SetCursor(LoadCursor(NULL, IDC_ARROW));
+				break;
+				case WM_LBUTTONDOWN: 
+					Env::lbuttondownMessage= true;
 				break;
 				default:
 					return DefWindowProc(hWnd, message, wParam, lParam);
@@ -206,14 +210,21 @@ void envUpdate(Env& env)
 	Sleep(1);
 	SwapBuffers(env.hDC);
 
+	env.lbuttondownMessage= false;
+
 	MSG msg;
 	while(PeekMessage(&msg, env.hWnd, 0, 0, PM_REMOVE) > 0) { 
 		TranslateMessage(&msg); 
 		DispatchMessage(&msg); 
 	}
-	env.lmbDown= GetKeyState(VK_LBUTTON) & 0x8000;
 
-	if (Env::closeEvent)
+	if (env.lbuttondownMessage)
+		env.lmbDown= true;
+	// Release can happen outside window
+	if ((GetKeyState(VK_LBUTTON) & 0x8000) == 0)
+		env.lmbDown= false;
+
+	if (Env::closeMessage)
 		env.quitRequested= true;
 
 	RECT rect;
