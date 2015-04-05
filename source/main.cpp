@@ -157,13 +157,22 @@ HWaveFunc createHWaveFunc(int n, int l, int m, double phase)
 	return w;
 }
 
+struct DZLookup {
+	uint16 r, theta;
+};
+
 /// Used in `inteferenceIntegral`
 void precalc(
 		const HWaveFunc* w,
 		double* r_dependent, int r_size, double r_max,
 		double* theta_dependent, int theta_size,
-		Complex* phi_dependent, int phi_size)
+		Complex* phi_dependent, int phi_size,
+		DZLookup* dz_lookup, double z_distance)
 {
+	const double dr= r_max/r_size;
+	const double dtheta= pi/theta_size;
+	const double dphi= tau/phi_size;
+
 	for (int r_i= 0; r_i < r_size; ++r_i) {
 		const double r= r_max*r_i/r_size;
 		const double rho= 2*r/(w->n*bohrRadius);
@@ -197,6 +206,27 @@ void precalc(
 		phi_dependent[phi_i].a= std::cos(w->m*phi + w->phase);
 		phi_dependent[phi_i].b= std::sin(w->m*phi + w->phase);
 	}
+
+	// Lookup table for r -> r' and theta -> theta' corresponding to
+	// z -> z + dz for second wavefunction
+	const double dz= z_distance;
+	for (int theta_i= 0; theta_i < theta_size; ++theta_i) {
+		double cos_theta= std::cos(dtheta*theta_i);
+		for (int r_i= 0; r_i < r_size; ++r_i) {
+			double r= r_i*dr;
+			double r_prime= std::sqrt(r*r + dz*dz - 2.0*r*dz*cos_theta);
+			double theta_prime= std::acos(clamp(
+						(r*cos_theta - dz)/(r_prime + 0.00000001),
+						0.0, 1.0));
+			assert(r_prime >= 0.0);
+			assert(theta_prime >= 0.0);
+			DZLookup lookup= { (uint16)(r_prime/dr), (uint16)(theta_prime/dtheta) };
+			assert(lookup.theta < theta_size);
+			if (lookup.r >= r_size)
+				lookup.r= r_size - 1;
+			dz_lookup[r_i + theta_i*r_size]= lookup;
+		}
+	}
 }
 
 /// Integral dx^3 psi_1 * conj(psi_2)
@@ -206,9 +236,9 @@ Complex interferenceIntegral(
 		double r_max,
 		double z_distance)
 {
-	const int r_steps= 100;
-	const int theta_steps= 70;
-	const int phi_steps= 70;
+	const int r_steps= 150;
+	const int theta_steps= 100;
+	const int phi_steps= 100;
 
 	// Wavefunction values are divided to different precalculated tables
 	double r_1[r_steps]; // Normalization and r-dependencies
@@ -217,37 +247,13 @@ Complex interferenceIntegral(
 	double theta_2[theta_steps];
 	Complex phi_1[phi_steps]; // Rest of spherical harmonic (phi-dependent)
 	Complex phi_2[phi_steps];
-	precalc(psi_1, r_1, r_steps, r_max, theta_1, theta_steps, phi_1, phi_steps);
-	precalc(psi_2, r_2, r_steps, r_max, theta_2, theta_steps, phi_2, phi_steps);
+	DZLookup dz_lookup[r_steps*theta_steps];
+	precalc(psi_1, r_1, r_steps, r_max, theta_1, theta_steps, phi_1, phi_steps, dz_lookup, z_distance);
+	precalc(psi_2, r_2, r_steps, r_max, theta_2, theta_steps, phi_2, phi_steps, dz_lookup, z_distance);
 
 	const double dr= r_max/r_steps;
 	const double dtheta= pi/theta_steps;
 	const double dphi= tau/phi_steps;
-
-	// Lookup table for r -> r' and theta -> theta' corresponding to
-	// z -> z + dz for second wavefunction
-	const double dz= z_distance;
-	struct DZLookup {
-		uint16 r, theta;
-	};
-	DZLookup dz_lookup[r_steps*theta_steps];
-	for (int theta_i= 0; theta_i < theta_steps; ++theta_i) {
-		double cos_theta= std::cos(dtheta*theta_i);
-		for (int r_i= 0; r_i < r_steps; ++r_i) {
-			double r= r_i*dr;
-			double r_prime= std::sqrt(r*r + dz*dz - 2.0*r*dz*cos_theta);
-			double theta_prime= std::acos(clamp(
-						(r*cos_theta - dz)/(r_prime + 0.00000001),
-						0.0, 1.0));
-			assert(r_prime >= 0.0);
-			assert(theta_prime >= 0.0);
-			DZLookup lookup= { (uint16)(r_prime/dr), (uint16)(theta_prime/dtheta) };
-			assert(lookup.theta < theta_steps);
-			if (lookup.r >= r_steps)
-				lookup.r= r_steps - 1;
-			dz_lookup[r_i + theta_i*r_steps]= lookup;
-		}
-	}
 
 	// Volume integral
 	Complex result= {};
@@ -268,6 +274,59 @@ Complex interferenceIntegral(
 				double dV= r*r*sin_theta*dr*dphi*dtheta;
 				result.a += value.a*dV;
 				result.b += value.b*dV;
+			}
+		}
+	}
+	return result;
+}
+
+/// Integral part of the normalization factor for the hydrogen molecule
+/// int dx_1^3 Real(conj(psi_1) * psi_2 * interferenceIntegral) 
+/// @todo Merge with `interferenceIntegral` as it's almost the same calculation
+double H2_N_integralPart(
+		const HWaveFunc* psi_1,
+		const HWaveFunc* psi_2,
+		const Complex interference_integral,
+		double r_max,
+		double z_distance)
+{
+	const int r_steps= 150;
+	const int theta_steps= 100;
+	const int phi_steps= 100;
+
+	// Wavefunction values are divided to different precalculated tables
+	double r_1[r_steps]; // Normalization and r-dependencies
+	double r_2[r_steps];
+	double theta_1[theta_steps]; // Part of spherical harmonic (theta-dependent)
+	double theta_2[theta_steps];
+	Complex phi_1[phi_steps]; // Rest of spherical harmonic (phi-dependent)
+	Complex phi_2[phi_steps];
+	DZLookup dz_lookup[r_steps*theta_steps];
+	precalc(psi_1, r_1, r_steps, r_max, theta_1, theta_steps, phi_1, phi_steps, dz_lookup, z_distance);
+	precalc(psi_2, r_2, r_steps, r_max, theta_2, theta_steps, phi_2, phi_steps, dz_lookup, z_distance);
+
+	const double dr= r_max/r_steps;
+	const double dtheta= pi/theta_steps;
+	const double dphi= tau/phi_steps;
+
+	// Volume integral
+	double result= 0;
+	for (int theta_i= 0; theta_i < theta_steps; ++theta_i) {
+		const double sin_theta= std::sin(dtheta*theta_i);
+		for (int phi_i= 0; phi_i < phi_steps; ++phi_i) {
+			for (int r_i= 0; r_i < r_steps; ++r_i) {
+				double amplitude_1= r_1[r_i]*theta_1[theta_i];
+
+				DZLookup lookup= dz_lookup[r_i + theta_i*r_steps];
+				double amplitude_2= r_2[lookup.r]*theta_2[lookup.theta];
+
+				Complex v1= { amplitude_1*phi_1[phi_i].a, amplitude_1*phi_1[phi_i].b };
+				Complex v2= { amplitude_2*phi_2[phi_i].a, amplitude_2*phi_2[phi_i].b };
+				Complex value= conj(v1)*v2*interference_integral;
+
+				double r= dr*r_i;
+				double dV= r*r*sin_theta*dr*dphi*dtheta;
+				result += value.a*dV;
 			}
 		}
 	}
@@ -382,15 +441,23 @@ VolumeShader createVolumeShader(
 	String calc_total_wavefunc_define= createString();
 	append(&calc_total_wavefunc_define, "#define CALC_TOTAL_WAVEFUNC ");
 	if (molecule) {
-		// Molecule rendering
+		// H2 molecule rendering
 		// |psi_total| = |psi_1|^2 + |psi_2|^2 +- interference
 		assert(wave_count == 2 && "Molecule visualization only supported for exactly two wavefuncs");
 
-		double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
-		Complex integral= interferenceIntegral(
+		const double max_r= 5.0*std::pow(waves[0].n, 2.0); // Empirical value
+		const Complex interference= interferenceIntegral(
 				&hwavefuncs[0], &hwavefuncs[1], max_r,
 				waves[1].translation - waves[0].translation);
-		std::printf("<psi_1|psi_2>: %f, %f\n", integral.a, integral.b);
+		std::printf("<psi_1|psi_2>: %f, %f\n", interference.a, interference.b);
+
+		const double n_int_part= H2_N_integralPart(
+				&hwavefuncs[0], &hwavefuncs[1], interference, max_r,
+				waves[1].translation - waves[0].translation);
+		double N= 1.0/(2.0 + (h2_symmetry ? 1 : -1)*2.0*n_int_part);
+		if (N < 0.0)
+			N= 0; // Happens when antisymmetric electrons are really close
+		std::printf("N: %f\n", N);
 
 		append(&calc_total_wavefunc_define, "%s",
 				"vec3 cart_p;"
@@ -419,9 +486,9 @@ VolumeShader createVolumeShader(
 				"const float imag_int= %e;"
 				"float real_interf= real_0*real_1*real_int + imag_0*imag_1*real_int"
 				"					- real_0*imag_1*imag_int + real_1*imag_0*imag_int;"
-				"P= 0.25*(real_0*real_0 + imag_0*imag_0 + real_1*real_1 + imag_1*imag_1 SPACE_PART_SYMMETRY 2*real_interf);"
+				"P= %e*(real_0*real_0 + imag_0*imag_0 + real_1*real_1 + imag_1*imag_1 SPACE_PART_SYMMETRY 2*real_interf);"
 				"total_complex_phase= atan2(imag_0 + imag_1, real_0 + real_1);",
-				integral.a, integral.b);
+				interference.a, interference.b, N);
 
 	} else {
 		// Superposition rendering
@@ -476,6 +543,7 @@ VolumeShader createVolumeShader(
 		"varying vec3 v_pos;"
 		"varying vec3 v_normal;"
 		"varying vec2 v_uv;"
+		"\n#define PI 3.14159265359\n"
 		"float rand(vec2 co)"
 		"{"
 		"    return fract(sin(dot(co.xy, vec2(12.9898,78.233)))*43758.5453);"
@@ -485,7 +553,14 @@ VolumeShader createVolumeShader(
 		"	if (abs(x) > abs(y))" /// @todo Remove branch
 		"		return atan(y, x);"
 		"	else"
-		"		return 3.1415927/2.0 - atan(x, y);"
+		"		return PI/2.0 - atan(x, y);"
+		"}"
+		// Adapted from http://lolengine.net/blog/2013/07/27/rgb-to-hsv-in-glsl
+		"vec3 hsv2rgb(vec3 c)"
+		"{"
+		"	vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);"
+		"	vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);"
+		"	return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);"
 		"}"
 		"void main()"
 		"{"
@@ -502,7 +577,7 @@ VolumeShader createVolumeShader(
 		"		P *= VISUAL_AMPLITUDE;"
 		"		if (P < CUTOFF) P= 0;"
 		"\n#if COMPLEX_COLOR == 1\n"
-		"		vec3 emission= P*normalize(vec3(0.5 - 0.5*cos(total_complex_phase), 0.2, 0.5 + 0.5*sin(total_complex_phase)));"
+		"		vec3 emission= P*normalize(vec3(0.5*(1 - cos(total_complex_phase)), 0.2, 0.5*(1 + sin(total_complex_phase))));"
 		"\n#else\n"
 		"		vec3 emission= P*color;"
 		"\n#endif\n"
