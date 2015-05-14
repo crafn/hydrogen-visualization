@@ -15,7 +15,7 @@ bool Env::lbuttondownMessage;
 
 Env envInit()
 {
-	const char* title= "QM Test";
+	const char* title= "Hydrogen visualization";
 	Vec2i reso(800, 800);
 
 	Env env;
